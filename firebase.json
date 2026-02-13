@@ -1,0 +1,81 @@
+{
+    "functions": {
+        "source": "functions",
+        "runtime": "nodejs20"
+    },
+    "database": {
+        "rules": "database.rules.json"
+    },
+    "hosting": {
+        "public": "public",
+        "ignore": [
+            "firebase.json",
+            "**/.*",
+            "**/node_modules/**"
+        ],
+        "rewrites": [
+            {
+                "source": "/api/create_payment",
+                "function": "createPaymentApi"
+            },
+            {
+                "source": "/api/zapupi_auto_check",
+                "function": "zapupiAutoCheckApi"
+            },
+            {
+                "source": "/api/check_payment_status",
+                "function": "checkPaymentStatusApi"
+            },
+            {
+                "source": "/api/webhook",
+                "function": "webhookApi"
+            },
+            {
+                "source": "/webhook",
+                "function": "webhookApi"
+            }
+        ],
+        "headers": [
+            {
+                "source": "**",
+                "headers": [
+                    {
+                        "key": "X-Content-Type-Options",
+                        "value": "nosniff"
+                    },
+                    {
+                        "key": "X-Frame-Options",
+                        "value": "SAMEORIGIN"
+                    }
+                ]
+            },
+            {
+                "source": "**/*.html",
+                "headers": [
+                    {
+                        "key": "Cache-Control",
+                        "value": "no-cache, no-store, must-revalidate"
+                    }
+                ]
+            },
+            {
+                "source": "**/*.@(jpg|jpeg|gif|png|svg|webp|ico)",
+                "headers": [
+                    {
+                        "key": "Cache-Control",
+                        "value": "public, max-age=604800, immutable"
+                    }
+                ]
+            },
+            {
+                "source": "assets/**",
+                "headers": [
+                    {
+                        "key": "Cache-Control",
+                        "value": "public, max-age=86400"
+                    }
+                ]
+            }
+        ]
+    }
+}

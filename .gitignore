@@ -1,0 +1,42 @@
+# ─── Dependencies ────────────────────────────────
+node_modules/
+functions/node_modules/
+
+# ─── Firebase Local ──────────────────────────────
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+ui-debug.log
+firestore-debug.log
+pubsub-debug.log
+database-debug.log
+
+# ─── Sensitive / Seed Data ───────────────────────
+# Contains admin password hashes and seed credentials
+initial_data.json
+initial_seed.json
+
+# ─── Backups ─────────────────────────────────────
+backups/
+
+# ─── IDE / OS ────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── Build Artifacts ─────────────────────────────
+.vercel/
+.cursor/
+
+# ─── Environment Variables ───────────────────────
+.env
+.env.local
+.env.*.local
+
+# ─── Agent / AI Tool Directories ─────────────────
+.agent/
+.gemini/
