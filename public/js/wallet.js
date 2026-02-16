@@ -1,6 +1,12 @@
 // JeetoPlay — Wallet & Transactions
 // Auto-extracted from app.html
 
+// XSS sanitization utility
+function escapeHtmlWallet(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
 async function loadWalletTransactions() {
     const container = document.getElementById('wallet-txn-history');
     container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted);"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</div>';
@@ -91,7 +97,7 @@ async function loadWalletTransactions() {
                     </div>
                 </div>
                 <div style="font-weight: 600; font-size: 1rem; color: ${colorClass};">
-                    ${sign}₹${txn.amount}
+                    ${sign}${formatCoin(txn.amount)}
                 </div>
             `;
             container.appendChild(row);
@@ -109,13 +115,63 @@ async function loadWalletTransactions() {
 
 // Format transaction reason with professional labels
 function formatTransactionReason(reason, txn) {
-    // Handle cases where reason is missing or generic
+    // ── 1. eSports transactions (matchId field) ──
+    if (txn.matchId) {
+        const gameName = txn.gameName || 'Match';
+        const shortId = txn.matchShortId || txn.matchId.substring(0, 8).toUpperCase();
+        const matchType = txn.matchType ? ` ${txn.matchType}` : '';
+
+        if (txn.type === 'MATCH_WINNING') {
+            return `🏆 ${gameName}${matchType} #${shortId}`;
+        }
+        if (txn.type === 'REWARD_ADJUSTMENT') {
+            return `⚙️ ${gameName} #${shortId} Adjustment`;
+        }
+        // Match join (debit)
+        const slots = txn.slotsBooked > 1 ? ` (${txn.slotsBooked} slots)` : '';
+        return `🎮 ${gameName}${slots}`;
+    }
+
+    // ── 2. Ludo transactions (ludoMatchId field) ──
+    if (txn.ludoMatchId) {
+        const shortId = txn.ludoMatchId.slice(-6).toUpperCase();
+        const rLower = (txn.reason || '').toLowerCase();
+        // Check refund/cancel BEFORE isCredit — refunds are also credits
+        if (rLower.includes('refund') || rLower.includes('cancel')) return `↩️ Ludo Refund #${shortId}`;
+        if (txn.isCredit) {
+            return `🎲 Ludo Won #${shortId}`;
+        }
+        if (rLower.includes('rematch')) return `🎲 Ludo Rematch #${shortId}`;
+        if (rLower.includes('joined') || rLower.includes('join')) return `🎲 Ludo Joined #${shortId}`;
+        if (rLower.includes('created') || rLower.includes('create')) return `🎲 Ludo Challenge #${shortId}`;
+        return `🎲 Ludo #${shortId}`;
+    }
+
+    // ── 3. Tournament transactions (tournamentId field) ──
+    if (txn.tournamentId) {
+        const name = txn.gameName || txn.description?.replace(/Tournament.*?:/i, '').trim() || 'Tournament';
+        if (txn.type === 'TOURNAMENT_REFUND' || txn.isCredit) {
+            return `↩️ Tournament Refund`;
+        }
+        return `🏅 Tournament Entry`;
+    }
+
+    // ── 4. Admin wallet operations (adminId but NO game IDs) ──
+    if (txn.adminId) {
+        const isCredit = txn.isCredit === true || txn.type === 'CREDIT';
+        const actionEmoji = isCredit ? '💰' : '🔻';
+        const actionWord = isCredit ? 'Credit' : 'Debit';
+        const adminReason = txn.reason ? ` • ${txn.reason}` : '';
+        return `${actionEmoji} Admin ${actionWord}${adminReason}`;
+    }
+
+    // ── 5. Other known types ──
     if (!reason) {
-        if (txn.type === 'DEPOSIT') return 'Deposit Money';
-        if (txn.type === 'WITHDRAW') return 'Withdrawal Request';
+        if (txn.type === 'DEPOSIT') return '💳 Deposit Money';
+        if (txn.type === 'WITHDRAW' || txn.type === 'WITHDRAWAL') return '🏧 Withdrawal Request';
         if (txn.type === 'CREDIT') return 'Credited';
         if (txn.type === 'ADMIN_CREDIT') return '💰 Admin Credit';
-        if (txn.type === 'ADMIN_DEBIT') return '⚠️ Admin Debit';
+        if (txn.type === 'ADMIN_DEBIT') return '🔻 Admin Debit';
         if (txn.type === 'MATCH_WINNING') return '🏆 Match Reward';
         if (txn.type === 'REWARD_ADJUSTMENT') return '⚙️ Reward Adjustment';
         return 'Debited';
@@ -123,60 +179,22 @@ function formatTransactionReason(reason, txn) {
 
     const rLower = reason.toLowerCase();
 
-    // Admin related
-    if (rLower.includes('admin') && (rLower.includes('credit') || rLower.includes('deposit') || rLower.includes('add'))) {
-        return '💰 Admin Credit';
-    }
-
-    // Match related - use game details if available
+    // Match related
     if (rLower.includes('joined match') || rLower.includes('join match')) {
         const matchName = reason.replace(/joined match:?/i, '').replace(/join match:?/i, '').trim();
         return '🎮 ' + (matchName || 'Match Joined');
     }
     if (rLower.includes('refund')) {
-        if (rLower.includes('withdrawal') || rLower.includes('withdraw')) {
-            return '💳 Withdrawal Refund';
-        }
-        return '↩️ Match Refund';
+        if (rLower.includes('withdrawal') || rLower.includes('withdraw')) return '💳 Withdrawal Refund';
+        if (rLower.includes('ludo')) return '↩️ Ludo Refund';
+        return '↩️ Refund';
     }
-
-    // Match winnings - show game name and match ID if available
-    if (txn.type === 'MATCH_WINNING' || txn.type === 'REWARD_ADJUSTMENT') {
-        const gameName = txn.gameName || '';
-        const matchType = txn.matchType || '';
-        const matchShortId = txn.matchShortId || '';
-        const isWinning = txn.isCredit !== false && txn.type === 'MATCH_WINNING';
-
-        if (gameName && matchShortId) {
-            const emoji = isWinning ? '🏆' : '⚙️';
-            const typeText = matchType ? ` ${matchType}` : '';
-            return `${emoji} ${gameName}${typeText} #${matchShortId}`;
-        }
-        return isWinning ? '🏆 Match Reward' : '⚙️ Reward Adjustment';
-    }
-
-    // Legacy match winning detection
-    if (rLower.includes('winning') || rLower.includes('prize') || rLower.includes('reward')) {
-        return '🏆 Match Reward';
-    }
-    if (rLower.includes('kill reward')) {
-        return '🎯 Kill Reward';
-    }
-
-    // Deposits
-    if (rLower.includes('deposit')) {
-        return '💳 Deposit Money';
-    }
-
-    // Withdrawals
-    if (rLower.includes('withdraw')) {
-        return '🏧 Withdrawal Request';
-    }
-
-    // Result adjustment
-    if (rLower.includes('result') && rLower.includes('adjust')) {
-        return '⚙️ Result Adjustment';
-    }
+    if (rLower.includes('winning') || rLower.includes('prize') || rLower.includes('reward')) return '🏆 Match Reward';
+    if (rLower.includes('kill reward')) return '🎯 Kill Reward';
+    if (rLower.includes('deposit')) return '💳 Deposit Money';
+    if (rLower.includes('withdraw')) return '🏧 Withdrawal Request';
+    if (rLower.includes('result') && rLower.includes('adjust')) return '⚙️ Result Adjustment';
+    if (rLower.includes('promo code') || rLower.includes('coupon')) return '🎟️ Promo Bonus';
 
     // Fallback: Capitalize first letter
     return reason.charAt(0).toUpperCase() + reason.slice(1);
@@ -184,38 +202,88 @@ function formatTransactionReason(reason, txn) {
 
 // Get appropriate icon for transaction type
 function getTransactionIcon(txn) {
-    const reason = (txn.description || txn.reason || '').toLowerCase();
+    // Game-specific icons first
+    if (txn.matchId) {
+        if (txn.type === 'MATCH_WINNING' || txn.type === 'REWARD_ADJUSTMENT') return 'fa-solid fa-trophy';
+        return 'fa-solid fa-gamepad';
+    }
+    if (txn.ludoMatchId) {
+        const rLower = (txn.reason || '').toLowerCase();
+        if (rLower.includes('refund') || rLower.includes('cancel')) return 'fa-solid fa-rotate-left';
+        if (txn.isCredit) return 'fa-solid fa-trophy';
+        return 'fa-solid fa-dice';
+    }
+    if (txn.tournamentId) {
+        if (txn.isCredit) return 'fa-solid fa-medal';
+        return 'fa-solid fa-flag-checkered';
+    }
 
-    // Check type first for admin and match transactions
+    // Admin wallet operations
+    if (txn.adminId) return 'fa-solid fa-user-shield';
+
+    // Legacy type checks
     if (txn.type === 'ADMIN_CREDIT' || txn.type === 'ADMIN_DEBIT') return 'fa-solid fa-user-shield';
     if (txn.type === 'MATCH_WINNING' || txn.type === 'REWARD_ADJUSTMENT') return 'fa-solid fa-trophy';
 
-    if (reason.includes('admin')) return 'fa-solid fa-user-shield';
+    const reason = (txn.description || txn.reason || '').toLowerCase();
     if (reason.includes('match') || reason.includes('join')) return 'fa-solid fa-gamepad';
     if (reason.includes('refund') && (reason.includes('withdrawal') || reason.includes('withdraw'))) return 'fa-solid fa-money-bill-transfer';
     if (reason.includes('refund')) return 'fa-solid fa-rotate-left';
+    if (reason.includes('daily reward') || txn.dailyRewardBonus > 0) return 'fa-solid fa-gift';
+    if (reason.includes('spin wheel') || txn.spinWheelPrize > 0) return 'fa-solid fa-dharmachakra';
+    if (reason.includes('vip') || txn.vipPurchase || txn.vipBonus > 0) return 'fa-solid fa-crown';
     if (reason.includes('winning') || reason.includes('prize') || reason.includes('reward')) return 'fa-solid fa-trophy';
     if (reason.includes('deposit')) return 'fa-solid fa-wallet';
     if (reason.includes('withdraw')) return 'fa-solid fa-money-bill-transfer';
+    if (reason.includes('promo') || reason.includes('coupon')) return 'fa-solid fa-ticket';
 
     return txn.type === 'CREDIT' ? 'fa-solid fa-arrow-down' : 'fa-solid fa-arrow-up';
 }
 
 // Get wallet badge (Deposit/Winning)
 function getWalletBadge(txn) {
-    // Check if we have deposit/winning refund info
+    // Game-specific badges — show game type
+    if (txn.matchId) {
+        const mode = txn.matchType || '';
+        return `<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(99, 102, 241, 0.2); color: #818cf8;">eSports${mode ? ' ' + mode : ''}</span>`;
+    }
+    if (txn.ludoMatchId) {
+        return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(251, 146, 60, 0.2); color: #fb923c;">Ludo</span>';
+    }
+    if (txn.tournamentId) {
+        return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(168, 85, 247, 0.2); color: #a855f7;">Tournament</span>';
+    }
+
+    // Admin wallet operations — show wallet type
+    if (txn.adminId && txn.walletType) {
+        if (txn.walletType === 'winning') {
+            return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(251, 191, 36, 0.2); color: #fbbf24;">Winning</span>';
+        }
+        return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(77, 208, 225, 0.2); color: #4dd0e1;">Deposit</span>';
+    }
+
+    // Special transaction badges
     if (txn.depositRefund > 0 && txn.winningRefund > 0) {
         return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(99, 102, 241, 0.2); color: #818cf8;">Both</span>';
     }
-    if (txn.depositRefund > 0 || (txn.balanceAfter?.deposit !== txn.balanceBefore?.deposit)) {
-        return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(16, 185, 129, 0.2); color: var(--success);">Deposit</span>';
+    if (txn.couponBonus > 0) {
+        return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(168, 85, 247, 0.2); color: #a855f7;">Promo Bonus</span>';
     }
-    if (txn.winningRefund > 0 || (txn.balanceAfter?.winning !== txn.balanceBefore?.winning)) {
-        return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(251, 191, 36, 0.2); color: #fbbf24;">Winnings</span>';
+    if (txn.vipBonus > 0) {
+        return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(250, 204, 21, 0.2); color: #facc15;">VIP Bonus</span>';
+    }
+    if (txn.vipPurchase) {
+        return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(250, 204, 21, 0.2); color: #facc15;">VIP Purchase</span>';
+    }
+    if (txn.spinWheelPrize > 0) {
+        return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(236, 72, 153, 0.2); color: #ec4899;">Spin Prize</span>';
+    }
+    if (txn.dailyRewardBonus > 0) {
+        return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(251, 146, 60, 0.2); color: #fb923c;">Daily Bonus</span>';
     }
 
-    // Default based on transaction type
-    if (txn.type === 'CREDIT' && (txn.reason || '').toLowerCase().includes('winning')) {
+    // Default based on wallet type field or transaction type
+    if (txn.walletType === 'winning' || (txn.type === 'CREDIT' && (txn.reason || '').toLowerCase().includes('winning'))) {
         return '<span style="padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; background: rgba(251, 191, 36, 0.2); color: #fbbf24;">Winnings</span>';
     }
 
@@ -229,7 +297,7 @@ function getWalletBadge(txn) {
 
 window.openWithdrawModal = async function () {
     const winningBal = state.userData?.winningBalance || 0;
-    document.getElementById('withdraw-available').innerText = '₹' + winningBal;
+    document.getElementById('withdraw-available').innerHTML = formatCoin(winningBal);
     document.getElementById('withdraw-amount').value = '';
 
     // Pre-fill UPI from profile if saved
@@ -245,7 +313,7 @@ window.openWithdrawModal = async function () {
 
     const amountInput = document.getElementById('withdraw-amount');
     amountInput.min = minWithdrawal;
-    amountInput.placeholder = `Min ₹${minWithdrawal}`;
+    amountInput.placeholder = `Min ${minWithdrawal} coins`;
 
     document.getElementById('withdraw-modal').classList.remove('hidden');
 };
@@ -287,7 +355,7 @@ window.processDeposit = async function () {
                 state.userData.depositBalance = result.data.newBalance;
                 updateUIHeader();
 
-                showToast('₹' + amount + ' deposited successfully!', 'success');
+                showToast(formatCoinText(amount) + ' deposited successfully!', 'success');
             } catch (err) {
                 await db.ref('deposits/' + depositId).update({ status: 'FAILED' });
                 showToast('Deposit failed: ' + (err.message || 'Unknown error'), 'error');
@@ -318,14 +386,14 @@ window.processWithdraw = async function () {
             minWithdrawal = parseInt(cfgSnap.val()) || 10;
         }
     } catch (e) {
-        console.warn('Could not fetch min_withdrawal config, using default ₹10');
+        console.warn('Could not fetch min_withdrawal config, using default 10 coins');
     }
 
     if (!amount || amount < minWithdrawal) {
-        return showToast(`Minimum withdrawal is ₹${minWithdrawal}`, 'error');
+        return showToast(`Minimum withdrawal is ${formatCoinText(minWithdrawal)}`, 'error');
     }
     if (amount > winningBal) {
-        return showToast(`Insufficient winning balance. You have ₹${winningBal}`, 'error');
+        return showToast(`Insufficient winning balance. You have ${formatCoinText(winningBal)}`, 'error');
     }
     if (!upi || !upi.includes('@')) {
         return showToast('Enter a valid UPI ID', 'error');
@@ -358,59 +426,76 @@ window.processWithdraw = async function () {
 };
 
 // --- VIEW MATCH RESULTS ---
-window.viewMatchResults = async function (matchId) {
-    const listEl = document.getElementById('match-results-list');
-    listEl.innerHTML = '<div style="text-align:center; padding:20px;">Loading...</div>';
-    document.getElementById('match-results-modal').classList.remove('hidden');
+// NOTE: viewMatchResults is now defined in esports.js with enhanced UI
+// (position rewards, user highlighting, team mode support).
+// The function is global (window.viewMatchResults) and esports.js loads after wallet.js.
+
+// ─── Coupon / Promo Code Redemption ─────────────────────────
+
+window.redeemCouponCode = async function () {
+    const input = document.getElementById('promo-code-input');
+    const btn = document.getElementById('apply-promo-btn');
+    const resultDiv = document.getElementById('promo-result');
+    const code = (input?.value || '').trim();
+
+    if (!code || code.length < 3) {
+        resultDiv.style.display = 'block';
+        resultDiv.style.background = 'rgba(239, 68, 68, 0.1)';
+        resultDiv.style.color = '#ef4444';
+        resultDiv.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Enter a valid promo code';
+        return;
+    }
+
+    // Disable button & show loading
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    resultDiv.style.display = 'none';
 
     try {
-        const matchSnap = await db.ref('esports_matches/' + matchId).once('value');
-        const match = matchSnap.val();
+        const redeemFn = functions.httpsCallable('redeemCoupon');
+        const result = await redeemFn({ code });
 
-        document.getElementById('result-match-title').innerText = match?.title || 'Match Results';
+        // Show success
+        resultDiv.style.display = 'block';
+        resultDiv.style.background = 'rgba(16, 185, 129, 0.12)';
+        resultDiv.style.color = '#10b981';
+        resultDiv.innerHTML = `<i class="fa-solid fa-check-circle"></i> ${result.data.message}`;
 
-        const participants = match?.participants || {};
-        const results = match?.results || {};
+        // Clear input
+        input.value = '';
 
-        if (Object.keys(results).length === 0) {
-            listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--text-muted);">Results not yet declared</div>';
-            return;
+        // Refresh balance from server
+        const userSnap = await db.ref('users/' + state.user.uid).once('value');
+        const userData = userSnap.val();
+        if (userData) {
+            state.userData.depositBalance = userData.depositBalance || 0;
+            state.userData.winningBalance = userData.winningBalance || 0;
+            updateUIHeader();
+
+            // Also update wallet view balances if visible
+            const depEl = document.getElementById('wallet-deposit-bal');
+            const winEl = document.getElementById('wallet-winning-bal');
+            const totEl = document.getElementById('wallet-total-bal');
+            if (depEl) depEl.innerHTML = formatCoin(userData.depositBalance || 0);
+            if (winEl) winEl.innerHTML = formatCoin(userData.winningBalance || 0);
+            if (totEl) totEl.innerHTML = formatCoin((userData.depositBalance || 0) + (userData.winningBalance || 0));
         }
 
-        listEl.innerHTML = '';
+        // Refresh transactions
+        if (typeof loadWalletTransactions === 'function') {
+            loadWalletTransactions();
+        }
 
-        // Sort by position
-        const sortedResults = Object.entries(results).sort((a, b) => (a[1].position || 999) - (b[1].position || 999));
+        showToast(`🎟️ ${formatCoinText(result.data.bonusAmount)} bonus credited!`, 'success');
 
-        sortedResults.forEach(([pKey, result], idx) => {
-            const participant = participants[pKey] || {};
-            const item = document.createElement('div');
-            item.style.padding = '12px';
-            item.style.borderBottom = '1px solid var(--border)';
-            item.style.display = 'flex';
-            item.style.justifyContent = 'space-between';
-            item.style.alignItems = 'center';
-
-            const positionIcon = result.position <= 3 ? ['🥇', '🥈', '🥉'][result.position - 1] : '#' + result.position;
-
-            item.innerHTML = `
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <div style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">
-                        ${positionIcon}
-                    </div>
-                    <div>
-                        <div style="font-weight: 600;">${participant.ign || 'Player'}</div>
-                        <div style="font-size: 0.75rem; color: var(--text-muted);">Kills: ${result.kills || 0}</div>
-                    </div>
-                </div>
-                <div style="text-align: right;">
-                    <div style="font-weight: 700; color: var(--primary);">₹${result.reward || 0}</div>
-                </div>
-            `;
-            listEl.appendChild(item);
-        });
     } catch (err) {
-        listEl.innerHTML = '<div style="text-align:center; padding:20px; color:var(--danger);">Error loading results</div>';
+        const msg = err.details || err.message || 'Failed to redeem coupon';
+        resultDiv.style.display = 'block';
+        resultDiv.style.background = 'rgba(239, 68, 68, 0.1)';
+        resultDiv.style.color = '#ef4444';
+        resultDiv.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> ${msg}`;
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-check"></i> Apply';
     }
 };
-

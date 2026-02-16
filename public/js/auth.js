@@ -65,6 +65,27 @@ auth.onAuthStateChanged(user => {
 
                     // Check for pending deposits from app refresh/reload
                     if (typeof checkPendingDeposit === 'function') checkPendingDeposit();
+
+                    // Check onboarding tutorial FIRST (once per session, for new users)
+                    if (!window._onboardingChecked) {
+                        window._onboardingChecked = true;
+                        setTimeout(() => {
+                            if (typeof checkOnboarding === 'function') checkOnboarding();
+                        }, 1500);
+                    }
+
+                    // Check daily reward AFTER onboarding (delayed, skip if onboarding is showing)
+                    if (!window._dailyRewardChecked) {
+                        window._dailyRewardChecked = true;
+                        setTimeout(() => {
+                            // Don't show daily reward if onboarding overlay is active
+                            if (document.getElementById('onboarding-overlay')) return;
+                            if (typeof checkDailyReward === 'function') checkDailyReward();
+                        }, 2500);
+                    }
+
+                    // Load theme preference from user profile
+                    if (typeof loadThemePreference === 'function') loadThemePreference();
                 }
             } else {
                 // User data missing - wait for it (signup writes this)
@@ -87,6 +108,7 @@ auth.onAuthStateChanged(user => {
         }
         state.user = null;
         state.userData = null;
+        window._dailyRewardChecked = false;
 
         // Clear any cached form data
         const loginForm = document.getElementById('login-form');

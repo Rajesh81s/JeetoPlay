@@ -1,9 +1,15 @@
 // JeetoPlay — Ludo
 // Auto-extracted from app.html
 
+// XSS sanitization utility
+function escapeHtmlLudo(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
 // --- LUDO LOGIC (Full State Machine) ---
 
-// Platform commission percentage (15%) — ₹10 challenge = ₹17 winning
+// Platform commission percentage (15%) — 🪙 10 challenge = 🪙 17 winning
 const LUDO_COMMISSION_PERCENT = 15;
 
 window.showCreateChallengeModal = function () {
@@ -24,7 +30,7 @@ window.setAmount = function (amount) {
     // Highlight selected slab
     document.querySelectorAll('.amount-slab').forEach(btn => {
         btn.classList.remove('selected');
-        if (btn.textContent === '₹' + amount) {
+        if (btn.textContent === '🪙 ' + amount) {
             btn.classList.add('selected');
         }
     });
@@ -39,10 +45,10 @@ window.createChallenge = async function () {
         return showToast('Please enter your Ludo King username', 'error');
     }
     if (!amount || amount < 10) {
-        return showToast('Minimum amount is ₹10', 'error');
+        return showToast('Minimum amount is 🪙 10', 'error');
     }
     if (amount > 25000) {
-        return showToast('Maximum amount is ₹25,000', 'error');
+        return showToast('Maximum amount is 🪙 25,000', 'error');
     }
     if (amount % 10 !== 0) {
         return showToast('Amount must be in multiples of 10', 'error');
@@ -56,7 +62,7 @@ window.createChallenge = async function () {
 
     // Check balance
     if (totalBalance < amount) {
-        showInsufficientBalanceModal(`Need ₹${amount} to create challenge. Your balance: ₹${totalBalance.toFixed(2)}`);
+        showInsufficientBalanceModal(`Need 🪙 ${amount} to create challenge. Your balance: 🪙 ${totalBalance.toFixed(2)}`);
         return;
     }
 
@@ -88,6 +94,8 @@ window.createChallenge = async function () {
 // Cancel Challenge - tiered logic based on match state
 // OPEN/PAIRED: unilateral cancel allowed
 // ROOM_SHARED/IN_PROGRESS: mutual cancel required (request + accept)
+let _pendingCancelData = null; // Stores match data for custom cancel confirmation
+
 window.cancelMyChallenge = async function (id) {
     try {
         // First, fetch the match to determine the correct cancel flow
@@ -103,26 +111,15 @@ window.cancelMyChallenge = async function (id) {
 
         // Route based on match status
         if (match.status === 'OPEN' || match.status === 'PAIRED') {
-            // Unilateral cancel — allowed for OPEN/PAIRED
-            if (!confirm('Cancel this challenge? You will receive a full refund.')) return;
-            showToast('Cancelling...', 'info');
+            // Show custom cancel confirmation modal instead of native confirm()
+            _pendingCancelData = { id, match, uid, type: 'UNILATERAL' };
+            document.getElementById('confirm-cancel-match-id').value = id;
 
-            const cancelLudoMatchFn = functions.httpsCallable('cancelLudoMatch');
-            await cancelLudoMatchFn({ matchId: id, cancelType: 'UNILATERAL' });
+            // Close the match detail modal first to prevent stacking
+            _lastViewedMatchId = id;
+            document.getElementById('my-challenge-detail-modal')?.remove();
 
-            // Refresh user data to get updated balances
-            const userSnap = await db.ref('users/' + uid).once('value');
-            const userData = userSnap.val();
-            if (userData) {
-                state.userData.depositBalance = userData.depositBalance || 0;
-                state.userData.winningBalance = userData.winningBalance || 0;
-            }
-            updateUIHeader();
-            showToast('✅ Challenge cancelled & refunded!', 'success');
-
-            // Close detail modal if open
-            const detailModal = document.getElementById('my-challenge-detail-modal');
-            if (detailModal) detailModal.remove();
+            document.getElementById('confirm-cancel-modal').classList.remove('hidden');
 
         } else if (match.status === 'ROOM_SHARED' || match.status === 'IN_PROGRESS') {
             // Mutual cancel required — delegate to requestMutualCancel
@@ -131,6 +128,41 @@ window.cancelMyChallenge = async function (id) {
         } else {
             showToast('This match cannot be cancelled (status: ' + match.status + ')', 'error');
         }
+
+    } catch (e) {
+        console.error('Cancel error:', e);
+        showToast('Failed: ' + (e.details || e.message), 'error');
+    }
+};
+
+// Confirm unilateral cancel (after user taps in custom modal)
+window.confirmUnilateralCancel = async function () {
+    closeModal('confirm-cancel-modal');
+    _lastViewedMatchId = null; // Action completed, no need to re-open detail modal
+    if (!_pendingCancelData) return;
+
+    const { id, uid } = _pendingCancelData;
+    _pendingCancelData = null;
+
+    try {
+        showToast('Cancelling...', 'info');
+
+        const cancelLudoMatchFn = functions.httpsCallable('cancelLudoMatch');
+        await cancelLudoMatchFn({ matchId: id, cancelType: 'UNILATERAL' });
+
+        // Refresh user data to get updated balances
+        const userSnap = await db.ref('users/' + uid).once('value');
+        const userData = userSnap.val();
+        if (userData) {
+            state.userData.depositBalance = userData.depositBalance || 0;
+            state.userData.winningBalance = userData.winningBalance || 0;
+        }
+        updateUIHeader();
+        showToast('✅ Challenge cancelled & refunded!', 'success');
+
+        // Close detail modal if open
+        const detailModal = document.getElementById('my-challenge-detail-modal');
+        if (detailModal) detailModal.remove();
 
     } catch (e) {
         console.error('Cancel error:', e);
@@ -152,7 +184,25 @@ async function requestMutualCancel(id, match, uid, isCreator) {
         return showToast('You already requested cancellation. Waiting for opponent to accept.', 'info');
     }
 
-    if (!confirm('Request mutual cancellation? Your opponent must also agree for the match to be cancelled and refunded.')) return;
+    // Show custom mutual cancel modal instead of native confirm()
+    _pendingCancelData = { id, match, uid, isCreator, type: 'MUTUAL' };
+    document.getElementById('confirm-mutual-cancel-match-id').value = id;
+
+    // Close the match detail modal first to prevent stacking
+    _lastViewedMatchId = id;
+    document.getElementById('my-challenge-detail-modal')?.remove();
+
+    document.getElementById('confirm-mutual-cancel-modal').classList.remove('hidden');
+}
+
+// Confirm mutual cancel request (after user taps in custom modal)
+window.confirmMutualCancelRequest = async function () {
+    closeModal('confirm-mutual-cancel-modal');
+    _lastViewedMatchId = null; // Action completed, no need to re-open detail modal
+    if (!_pendingCancelData) return;
+
+    const { id } = _pendingCancelData;
+    _pendingCancelData = null;
 
     try {
         // Call Cloud Function
@@ -164,12 +214,10 @@ async function requestMutualCancel(id, match, uid, isCreator) {
         console.error('Request cancel error:', e);
         showToast('Failed: ' + (e.details || e.message), 'error');
     }
-}
+};
 
 // --- MUTUAL CANCEL: Accept (opponent agrees) ---
 window.acceptMutualCancel = async function (id) {
-    if (!confirm('Accept cancellation? Both players will be fully refunded.')) return;
-
     showToast('Processing mutual cancellation...', 'info');
 
     try {
@@ -199,8 +247,6 @@ window.acceptMutualCancel = async function (id) {
 
 // --- MUTUAL CANCEL: Reject ---
 window.rejectMutualCancel = async function (id) {
-    if (!confirm('Reject the cancellation request? The match will continue.')) return;
-
     try {
         // Call Cloud Function
         const cancelLudoMatchFn = functions.httpsCallable('cancelLudoMatch');
@@ -221,7 +267,7 @@ window.acceptChallenge = function (id, amount) {
     const totalBalance = depositBal + winningBal;
 
     if (amount > totalBalance) {
-        showInsufficientBalanceModal(`Need ₹${amount} to accept. Your balance: ₹${totalBalance.toFixed(2)}`);
+        showInsufficientBalanceModal(`Need 🪙 ${amount} to accept. Your balance: 🪙 ${totalBalance.toFixed(2)}`);
         return;
     }
 
@@ -271,7 +317,7 @@ window.confirmAcceptChallenge = async function () {
 };
 
 
-// Share Room Code (Creator only, PAIRED state)
+// Share Room Code (Creator only, PAIRED state — via Cloud Function)
 window.shareRoomCode = async function (id) {
     // First try to find input within the modal, then fall back to global search
     const modal = document.getElementById('my-challenge-detail-modal');
@@ -288,11 +334,8 @@ window.shareRoomCode = async function (id) {
     try {
         showToast('Sharing room code...', 'info');
 
-        await db.ref('ludo_matches/' + id).update({
-            roomCode: roomCode,
-            status: 'ROOM_SHARED',
-            roomSharedAt: firebase.database.ServerValue.TIMESTAMP
-        });
+        const shareRoomCodeFn = functions.httpsCallable('shareRoomCode');
+        await shareRoomCodeFn({ matchId: id, roomCode: roomCode });
 
         showToast('✅ Room code shared! Both players can now join.', 'success');
 
@@ -300,7 +343,7 @@ window.shareRoomCode = async function (id) {
         viewMyChallenge(id);
     } catch (e) {
         console.error('Share room code error:', e);
-        showToast('Failed: ' + e.message, 'error');
+        showToast('Failed: ' + (e.details || e.message), 'error');
     }
 };
 
@@ -335,16 +378,16 @@ window.hideRoomCodeInputScreen = function (matchId) {
     if (roomCodeDiv) roomCodeDiv.style.display = 'none';
 };
 
-// Start Game (transition to IN_PROGRESS)
+// Start Game (transition to IN_PROGRESS — via Cloud Function)
 window.startLudoGame = async function (id) {
     try {
-        await db.ref('ludo_matches/' + id).update({
-            status: 'IN_PROGRESS',
-            startedAt: firebase.database.ServerValue.TIMESTAMP
-        });
+        showToast('Starting game...', 'info');
+        const startLudoGameFn = functions.httpsCallable('startLudoGame');
+        await startLudoGameFn({ matchId: id });
         showToast('🎲 Game started! Submit result when finished.', 'success');
     } catch (e) {
-        showToast('Failed: ' + e.message, 'error');
+        console.error('Start game error:', e);
+        showToast('Failed: ' + (e.details || e.message), 'error');
     }
 };
 
@@ -387,17 +430,36 @@ window.clearScreenshot = function () {
     if (uploadBtn) uploadBtn.style.display = 'flex';
 };
 
+// Track which match detail modal was open (for re-opening on cancel)
+let _lastViewedMatchId = null;
+
 // Submit LOST - Show custom confirmation modal first
 window.submitLost = function (id) {
-    // Show custom confirmation modal instead of native confirm()
+    // Close the detail modal first to prevent stacking
+    _lastViewedMatchId = id;
+    const detailModal = document.getElementById('my-challenge-detail-modal');
+    if (detailModal) detailModal.remove();
+
+    // Show custom confirmation modal
     document.getElementById('confirm-lost-match-id').value = id;
     document.getElementById('confirm-lost-modal').classList.remove('hidden');
+};
+
+// Cancel result action and re-open the match detail modal
+window.cancelResultAndReopen = function (modalId) {
+    closeModal(modalId);
+    // Re-open the match detail view the user was looking at
+    if (_lastViewedMatchId) {
+        viewMyChallenge(_lastViewedMatchId);
+        _lastViewedMatchId = null;
+    }
 };
 
 // Actual submission after user confirms in custom modal
 window.confirmLostSubmit = async function () {
     const id = document.getElementById('confirm-lost-match-id').value;
     closeModal('confirm-lost-modal');
+    _lastViewedMatchId = null; // Action completed, no need to re-open
 
     try {
         showToast('Processing...', 'info');
@@ -420,6 +482,11 @@ window.confirmLostSubmit = async function () {
 
 // Show Result Modal (for WIN/DISPUTE - requires screenshot)
 window.showResultModal = function (id, type) {
+    // Close the detail modal first to prevent stacking
+    _lastViewedMatchId = id;
+    const detailModal = document.getElementById('my-challenge-detail-modal');
+    if (detailModal) detailModal.remove();
+
     const modal = document.getElementById('ludo-result-modal');
     const title = document.getElementById('ludo-result-modal-title');
     const desc = document.getElementById('ludo-result-modal-desc');
@@ -463,15 +530,17 @@ window.confirmSubmitResult = async function () {
 
     try {
         showToast('Uploading proof...', 'info');
+        _lastViewedMatchId = null; // Action completed, no need to re-open
         closeModal('ludo-result-modal');
 
-        // Convert to base64
-        const reader = new FileReader();
-        const base64Promise = new Promise((resolve) => {
-            reader.onload = (e) => resolve(e.target.result);
-            reader.readAsDataURL(file);
-        });
-        const screenshot = await base64Promise;
+        const uid = state.user.uid;
+
+        // Upload screenshot to Firebase Storage (instead of base64 in database)
+        const ext = file.name.split('.').pop().toLowerCase() || 'jpg';
+        const storagePath = `ludo_screenshots/${id}/${uid}.${ext}`;
+        const storageRef = window.fbStorage.ref(storagePath);
+        await storageRef.put(file, { contentType: file.type });
+        const screenshotUrl = await storageRef.getDownloadURL();
 
         // Call Cloud Function FIRST for result processing (all balance ops server-side)
         // NOTE: Screenshot must be saved AFTER cloud function call, not before.
@@ -481,17 +550,16 @@ window.confirmSubmitResult = async function () {
         const result = await submitLudoResultFn({
             matchId: id,
             resultType: type,
-            screenshotUrl: screenshot
+            screenshotUrl: screenshotUrl
         });
 
-        // Now store screenshot + remarks on the match (non-financial, client can do this)
-        const uid = state.user.uid;
+        // Now store screenshot URL + remarks on the match (non-financial, client can do this)
         const matchSnap = await db.ref('ludo_matches/' + id).once('value');
         const match = matchSnap.val();
         if (match) {
             const isCreator = match.creator?.uid === uid;
             const role = isCreator ? 'creator' : 'acceptor';
-            await db.ref(`ludo_matches/${id}/result/${role}/screenshot`).set(screenshot);
+            await db.ref(`ludo_matches/${id}/result/${role}/screenshot`).set(screenshotUrl);
             if (remarks) {
                 await db.ref(`ludo_matches/${id}/result/${role}/remarks`).set(remarks);
             }
@@ -501,7 +569,7 @@ window.confirmSubmitResult = async function () {
         if (result.data.autoResolved) {
             state.userData.winningBalance = (state.userData.winningBalance || 0) + result.data.winAmount;
             updateUIHeader();
-            showToast(`🎉 You WON ₹${result.data.winAmount.toFixed(2)}!`, 'success');
+            showToast(`🎉 You WON 🪙 ${result.data.winAmount.toFixed(2)}!`, 'success');
         } else if (result.data.dualDispute) {
             // Refresh user data to get updated balances after refund
             const userSnap = await db.ref('users/' + uid).once('value');
@@ -590,7 +658,7 @@ function loadChallenges(targetListId) {
             const isAcceptor = match.acceptor?.uid === state.user?.uid;
 
             if (isCreator || isAcceptor) {
-                if (match.status === 'COMPLETED' || match.status === 'CANCELLED') {
+                if (match.status === 'COMPLETED' || match.status === 'CANCELLED' || match.status === 'EXPIRED' || match.status === 'EXPIRING') {
                     myMatches.completed.push(match);
                 } else {
                     myMatches.live.push(match);
@@ -681,13 +749,13 @@ function createChallengeCard(match) {
             #${match.matchId || match.id.slice(-8)}
         </div>
         <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 4px;">
-            ${match.creator?.ludoKingUsername || 'Player'}
+            ${escapeHtmlLudo(match.creator?.ludoKingUsername || 'Player')}${match.creator?.isVip && typeof getVipBadgeHtml === 'function' ? getVipBadgeHtml(true) : ''}
         </div>
         <div style="font-size: 1.4rem; font-weight: 800; color: #00d26a; margin-bottom: 8px;">
-            ₹${match.amount}
+            🪙 ${match.amount}
         </div>
         <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 10px;">
-            Win: ₹${Math.floor(match.amount * 2 * (1 - LUDO_COMMISSION_PERCENT / 100))}
+            Win: 🪙 ${Math.floor(match.amount * 2 * (1 - LUDO_COMMISSION_PERCENT / 100))}
         </div>
         <button class="btn btn-primary btn-sm" 
             onclick="acceptChallenge('${match.id}', ${match.amount})" 
@@ -805,6 +873,9 @@ function renderMyChallenges() {
             case 'DISPUTED': statusColor = '#ef4444'; statusText = 'Disputed'; break;
             case 'COMPLETED': statusColor = '#22c55e'; statusText = 'Completed'; break;
             case 'CANCELLED': statusColor = '#6b7280'; statusText = 'Cancelled'; break;
+            case 'EXPIRED': statusColor = '#6b7280'; statusText = 'Expired'; break;
+            case 'EXPIRING': statusColor = '#6b7280'; statusText = 'Expiring...'; break;
+            case 'REMATCH_PENDING': statusColor = '#8b5cf6'; statusText = '🔄 Rematch'; break;
         }
 
         return `
@@ -812,7 +883,7 @@ function renderMyChallenges() {
                  onclick="viewMyChallenge('${match.id}')">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                     <div>
-                        <span style="font-weight: 700; color: #00d26a; font-size: 1.1rem;">₹${match.amount}</span>
+                        <span style="font-weight: 700; color: #00d26a; font-size: 1.1rem;">🪙 ${match.amount}</span>
                         <span style="font-size: 0.7rem; color: var(--text-muted); font-family: monospace; margin-left: 6px;">#${match.matchId || match.id.slice(-8)}</span>
                     </div>
                     <span style="background: ${statusColor}20; color: ${statusColor}; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">
@@ -824,7 +895,7 @@ function renderMyChallenges() {
                         <i class="fa-solid fa-user" style="color: white; font-size: 0.85rem;"></i>
                     </div>
                     <div>
-                        <div style="font-size: 0.9rem;">vs <strong>${opponentName}</strong></div>
+                        <div style="font-size: 0.9rem;">vs <strong>${opponentName}</strong>${(opponent?.isVip && typeof getVipBadgeHtml === 'function') ? getVipBadgeHtml(true) : ''}</div>
                         <div style="font-size: 0.75rem; color: var(--text-muted);">${formatTimeAgo(match.createdAt)}</div>
                     </div>
                 </div>
@@ -845,16 +916,44 @@ function viewMyChallenge(matchId) {
     const activeDiv = document.getElementById('home-my-challenge');
     if (!activeDiv) return;
 
-    // Clone content and show in a modal
+    // Status badge config
+    let sBadgeColor = '#6366f1', sBadgeText = match.status;
+    switch (match.status) {
+        case 'OPEN': sBadgeColor = '#f59e0b'; sBadgeText = 'Waiting'; break;
+        case 'PAIRED': sBadgeColor = '#6366f1'; sBadgeText = 'Paired'; break;
+        case 'ROOM_SHARED': sBadgeColor = '#22c55e'; sBadgeText = 'Room Shared'; break;
+        case 'IN_PROGRESS': sBadgeColor = '#ff6b35'; sBadgeText = 'In Progress'; break;
+        case 'DISPUTED': sBadgeColor = '#ef4444'; sBadgeText = 'Disputed'; break;
+        case 'COMPLETED': sBadgeColor = '#22c55e'; sBadgeText = 'Completed'; break;
+        case 'CANCELLED': sBadgeColor = '#6b7280'; sBadgeText = 'Cancelled'; break;
+        case 'EXPIRED': sBadgeColor = '#6b7280'; sBadgeText = 'Expired'; break;
+        case 'REMATCH_PENDING': sBadgeColor = '#8b5cf6'; sBadgeText = 'Rematch'; break;
+    }
+
+    // Clone content and show in a premium modal
     const modalHtml = `
         <div id="my-challenge-detail-modal" class="modal-overlay" style="display: flex;">
-            <div class="modal" style="max-width: 400px; max-height: 90vh; overflow-y: auto;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                    <h3 style="margin: 0;">Match #${match.matchId || match.id.slice(-8)}</h3>
-                    <button onclick="document.getElementById('my-challenge-detail-modal').remove()" 
-                        style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">
-                        <i class="fa-solid fa-times"></i>
-                    </button>
+            <div class="modal-content" style="max-width: 420px; max-height: 88vh; overflow-y: auto; padding-top: 1.5rem;">
+                <!-- Header -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                            <i class="fa-solid fa-gamepad" style="color: white; font-size: 1rem;"></i>
+                        </div>
+                        <div>
+                            <div style="font-weight: 700; font-size: 1rem; letter-spacing: -0.01em;">Match Details</div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted); font-family: monospace;">#${match.matchId || match.id.slice(-8)}</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="background: ${sBadgeColor}18; color: ${sBadgeColor}; padding: 4px 10px; border-radius: 20px; font-size: 0.72rem; font-weight: 600; border: 1px solid ${sBadgeColor}30;">
+                            ${sBadgeText}
+                        </span>
+                        <button onclick="document.getElementById('my-challenge-detail-modal').remove()" 
+                            style="background: var(--bg-hover); border: 1px solid var(--border); color: var(--text-muted); width: 32px; height: 32px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                            <i class="fa-solid fa-times" style="font-size: 0.85rem;"></i>
+                        </button>
+                    </div>
                 </div>
                 ${activeDiv.innerHTML}
             </div>
@@ -875,31 +974,117 @@ function formatTimeAgo(timestamp) {
     return `${Math.floor(seconds / 86400)}d ago`;
 }
 
-// Render Active Ludo Match (handles all states)
+// Render Active Ludo Match (handles all states) — Premium Dark Design
 function renderActiveLudo(match) {
     const div = document.getElementById('my-active-challenge') || document.getElementById('home-my-challenge');
     if (!div) return;
 
     const isCreator = match.creator?.uid === state.user?.uid;
     const opponent = isCreator ? match.acceptor : match.creator;
-    // Use Ludo King username for privacy
     const opponentName = opponent?.ludoKingUsername || opponent?.username || 'Opponent';
+    const myName = isCreator
+        ? (match.creator?.ludoKingUsername || 'You')
+        : (match.acceptor?.ludoKingUsername || 'You');
+    const creatorName = match.creator?.ludoKingUsername || match.creator?.username || 'Creator';
+    const prize = Math.floor(match.amount * 2 * (1 - LUDO_COMMISSION_PERCENT / 100));
+
+    // --- Premium VS Card Builder ---
+    function buildVSCard(leftName, leftLabel, rightName, rightLabel) {
+        return `
+            <div style="background: linear-gradient(135deg, #0f172a, #1e293b); border: 1px solid rgba(99,102,241,0.15); border-radius: 14px; padding: 16px; margin-bottom: 14px; position: relative; overflow: hidden;">
+                <div style="position: absolute; top: -20px; right: -20px; width: 80px; height: 80px; background: radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%);"></div>
+                <div style="display: flex; justify-content: space-between; align-items: center; position: relative; z-index: 1;">
+                    <div style="text-align: center; flex: 1;">
+                        <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #6366f1, #818cf8); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 6px;">
+                            <i class="fa-solid fa-user" style="color: white; font-size: 0.75rem;"></i>
+                        </div>
+                        <div style="font-weight: 700; color: #e2e8f0; font-size: 0.85rem;">${escapeHtmlLudo(leftName)}</div>
+                        <div style="font-size: 0.68rem; color: #64748b; margin-top: 2px;">${leftLabel}</div>
+                    </div>
+                    <div style="display: flex; flex-direction: column; align-items: center; padding: 0 8px;">
+                        <div style="width: 34px; height: 34px; background: linear-gradient(135deg, #f59e0b, #d97706); border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 12px rgba(245,158,11,0.25);">
+                            <span style="font-weight: 900; color: white; font-size: 0.7rem;">VS</span>
+                        </div>
+                    </div>
+                    <div style="text-align: center; flex: 1;">
+                        <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #ef4444, #f87171); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 6px;">
+                            <i class="fa-solid fa-user" style="color: white; font-size: 0.75rem;"></i>
+                        </div>
+                        <div style="font-weight: 700; color: #e2e8f0; font-size: 0.85rem;">${escapeHtmlLudo(rightName)}</div>
+                        <div style="font-size: 0.68rem; color: #64748b; margin-top: 2px;">${rightLabel}</div>
+                    </div>
+                </div>
+                <div style="margin-top: 12px; background: linear-gradient(135deg, rgba(34,197,94,0.06), rgba(16,185,129,0.03)); border: 1px solid rgba(34,197,94,0.12); border-radius: 10px; padding: 10px; display: flex; justify-content: space-between; align-items: center;">
+                    <div style="text-align: center; flex: 1;">
+                        <div style="font-size: 0.62rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Entry</div>
+                        <div style="font-weight: 700; color: #fbbf24; font-size: 0.9rem;">🪙 ${match.amount}</div>
+                    </div>
+                    <div style="width: 1px; height: 22px; background: rgba(255,255,255,0.06);"></div>
+                    <div style="text-align: center; flex: 1;">
+                        <div style="font-size: 0.62rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Prize</div>
+                        <div style="font-weight: 700; color: #22c55e; font-size: 0.9rem;">🪙 ${prize}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // --- Collapsible Rules Section ---
+    function buildRulesSection(variant) {
+        const rules = variant === 'creator' ? [
+            'Won? Screenshot your victory in Ludo King → tap Won → upload.',
+            'Lost? Tap Lost to confirm. <strong style="color:#f87171;">Not reporting = 🪙25 penalty.</strong>',
+            'Submit results within 2 hours of Room Code shared.',
+            'Opponent silent? Prize credited in 2-4 hours after proof.',
+            'Screen record your games for dispute protection.',
+            'Room code must be shared within 15 mins. <strong style="color:#f87171;">Late = 🪙25 penalty + auto-cancel.</strong>',
+            'Quick Mode & 5-6 player modes not allowed.',
+            'Both players must agree on and play the same mode.'
+        ] : [
+            'Victory? Screenshot win screen → tap Won → upload proof.',
+            'Defeat? Tap Lost to confirm. <strong style="color:#f87171;">Not reporting = 🪙25 penalty.</strong>',
+            'Results due within 2 hours of Room Code shared.',
+            'Opponent silent? Prize credited in 2-4 hours after proof.',
+            'Always record gameplay for dispute protection.',
+            'Challenger has 15 mins to share code. <strong style="color:#f87171;">Delay = 🪙25 penalty + full refund to you.</strong>',
+            'Quick Mode & 5-6 player modes not allowed.',
+            'Both players must play the exact same mode.'
+        ];
+        return `
+            <div style="background: linear-gradient(135deg, #1e1e2e, #1a1a2a); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; overflow: hidden; margin-bottom: 12px;">
+                <div onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'; this.querySelector('.rules-chevron').style.transform = this.nextElementSibling.style.display === 'none' ? 'rotate(0deg)' : 'rotate(180deg)';"
+                     style="padding: 12px 14px; cursor: pointer; display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-shield-halved" style="color: #818cf8; font-size: 0.8rem;"></i>
+                        <span style="font-weight: 600; font-size: 0.8rem; color: #a5b4fc;">Rules & Guidelines</span>
+                    </div>
+                    <i class="fa-solid fa-chevron-down rules-chevron" style="color: #475569; font-size: 0.65rem; transition: transform 0.2s;"></i>
+                </div>
+                <div style="display: none; padding: 0 14px 14px;">
+                    <ol style="padding-left: 16px; margin: 0; font-size: 0.7rem; color: #94a3b8; line-height: 1.7;">
+                        ${rules.map(r => '<li style="margin-bottom: 3px;">' + r + '</li>').join('')}
+                    </ol>
+                </div>
+            </div>
+        `;
+    }
 
     let statusHtml = '';
     let statusColor = 'var(--primary)';
-    let statusIcon = 'fa-spinner fa-spin';
 
     // State-based UI
     switch (match.status) {
         case 'OPEN':
             statusColor = '#f59e0b';
-            statusIcon = 'fa-hourglass-half';
             statusHtml = `
-                <div style="text-align: center; padding: 15px;">
-                    <div style="color: ${statusColor}; margin-bottom: 10px;">
-                        <i class="fa-solid ${statusIcon}"></i> Waiting for opponent...
+                <div style="text-align: center; padding: 24px 16px;">
+                    <div style="width: 52px; height: 52px; background: linear-gradient(135deg, rgba(245,158,11,0.12), rgba(245,158,11,0.04)); border: 2px solid rgba(245,158,11,0.25); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; animation: pulse 2s ease-in-out infinite;">
+                        <i class="fa-solid fa-hourglass-half" style="color: #fbbf24; font-size: 1.2rem;"></i>
                     </div>
-                    <button class="btn btn-outline" onclick="cancelMyChallenge('${match.id}')" style="margin-top: 10px;">
+                    <div style="font-weight: 600; color: #fbbf24; margin-bottom: 4px;">Searching for Opponent</div>
+                    <div style="font-size: 0.78rem; color: #64748b;">Your challenge is live — waiting for someone to accept</div>
+                    <button class="btn btn-outline btn-block" onclick="cancelMyChallenge('${match.id}')" 
+                        style="margin-top: 18px; padding: 12px; border-color: rgba(107,114,128,0.2); color: #94a3b8; font-size: 0.82rem; border-radius: 10px;">
                         <i class="fa-solid fa-times"></i> Cancel Challenge
                     </button>
                 </div>
@@ -908,125 +1093,65 @@ function renderActiveLudo(match) {
 
         case 'PAIRED':
             statusColor = '#6366f1';
-            statusIcon = 'fa-handshake';
             if (isCreator) {
-                // Creator sees match details with rules first, then can update room code
                 statusHtml = `
-                    <div id="ludo-paired-details-${match.id}" style="padding: 10px;">
-                        <!-- Header with Players -->
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; background: linear-gradient(135deg, #dc2626, #b91c1c); padding: 12px; border-radius: 10px;">
-                            <div style="text-align: center; flex: 1;">
-                                <div style="font-weight: 700; color: white;">${match.creator?.ludoKingUsername || 'You'}</div>
-                                <div style="font-size: 0.8rem; color: rgba(255,255,255,0.8);">Challenged</div>
-                                <div style="font-weight: 700; color: #fbbf24;">₹${match.amount}</div>
-                            </div>
-                            <div style="color: white; font-weight: 700; padding: 0 15px;">VS</div>
-                            <div style="text-align: center; flex: 1;">
-                                <div style="font-weight: 700; color: white;">${opponentName}</div>
-                                <div style="font-size: 0.8rem; color: rgba(255,255,255,0.8);">Winning</div>
-                                <div style="font-weight: 700; color: #4ade80;">₹${(match.amount * 2 * (1 - LUDO_COMMISSION_PERCENT / 100)).toFixed(0)}</div>
-                            </div>
-                        </div>
+                    <div id="ludo-paired-details-${match.id}" style="padding: 12px;">
+                        ${buildVSCard(myName, 'Challenger', opponentName, 'Opponent')}
                         
-                        <!-- Update Room Code Button -->
                         <button class="btn btn-primary btn-block" onclick="showRoomCodeInputScreen('${match.id}')" 
-                            style="background: linear-gradient(135deg, #dc2626, #b91c1c); border: none; margin-bottom: 15px; padding: 12px;">
-                            <i class="fa-solid fa-key"></i> Update Room Code To Proceed
+                            style="background: linear-gradient(135deg, #6366f1, #4f46e5); border: none; padding: 14px; border-radius: 12px; font-weight: 600; font-size: 0.88rem; margin-bottom: 14px; box-shadow: 0 4px 15px rgba(99,102,241,0.25);">
+                            <i class="fa-solid fa-key"></i> Share Room Code to Start
                         </button>
                         
-                        <!-- Rules Section -->
-                        <div style="background: #fff5f5; border: 1px solid #fecaca; border-radius: 10px; padding: 12px; margin-bottom: 10px;">
-                            <div style="font-weight: 700; color: #dc2626; margin-bottom: 10px; text-align: center;">📋 RULES & GUIDELINES</div>
-                            <ol style="padding-left: 18px; margin: 0; font-size: 0.75rem; color: #374151; line-height: 1.7;">
-                                <li>Won the match? Capture a screenshot from Ludo King showing your victory, then tap Won and upload it.</li>
-                                <li>Lost the game? Tap the Lost button to confirm. <strong style="color: #dc2626;">Failure to report = ₹25 penalty.</strong></li>
-                                <li>Both players must submit results within 2 hours after Room Code is shared.</li>
-                                <li>If opponent doesn't respond, your winnings will be credited within 2-4 hours after proof upload.</li>
-                                <li>Screen record your games for dispute protection.</li>
-                                <li>Need assistance? Contact JeetoPlay support anytime.</li>
-                                <li>Ludo King app is required to participate.</li>
-                                <li>Room code must be shared within 15 mins. <strong style="color: #dc2626;">Late sharing = ₹25 penalty + match cancellation with full refund to opponent.</strong></li>
-                                <li>Quick Mode and 5-6 player modes are not permitted on JeetoPlay.</li>
-                                <li>Choose your game mode carefully - both players must play the exact same mode.</li>
-                            </ol>
-                        </div>
+                        ${buildRulesSection('creator')}
                         
-                        <!-- Action Buttons -->
-                        <div style="display: flex; gap: 10px; margin-top: 10px;">
-                            <button class="btn btn-outline" onclick="cancelMyChallenge('${match.id}')" style="flex: 1; border-color: #6b7280; color: #6b7280;">
-                                <i class="fa-solid fa-times"></i> CANCEL
-                            </button>
-                        </div>
+                        <button class="btn btn-outline btn-block" onclick="cancelMyChallenge('${match.id}')" 
+                            style="padding: 10px; border-color: rgba(107,114,128,0.15); color: #64748b; font-size: 0.8rem;">
+                            <i class="fa-solid fa-times"></i> Cancel Match
+                        </button>
                     </div>
                     
-                    <!-- Hidden Room Code Input Screen -->
-                    <div id="ludo-roomcode-screen-${match.id}" style="display: none; padding: 15px;">
-                        <div style="text-align: center; color: ${statusColor}; margin-bottom: 15px;">
-                            <i class="fa-solid ${statusIcon}"></i> Match Paired with <strong>${opponentName}</strong>
+                    <div id="ludo-roomcode-screen-${match.id}" style="display: none; padding: 16px;">
+                        <div style="text-align: center; margin-bottom: 16px;">
+                            <div style="width: 46px; height: 46px; background: linear-gradient(135deg, #6366f1, #818cf8); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 10px;">
+                                <i class="fa-solid fa-key" style="color: white; font-size: 0.95rem;"></i>
+                            </div>
+                            <div style="font-weight: 600; color: #e2e8f0;">Enter Room Code</div>
+                            <div style="font-size: 0.78rem; color: #64748b; margin-top: 4px;">Paired with <strong style="color: #818cf8;">${escapeHtmlLudo(opponentName)}</strong></div>
                         </div>
-                        <div style="margin-bottom: 15px; background: var(--bg-hover); padding: 15px; border-radius: 10px;">
-                            <label style="display: block; margin-bottom: 8px; font-size: 0.9rem; color: var(--text-muted);">Enter Ludo King Room Code</label>
+                        <div style="background: linear-gradient(135deg, #0f172a, #1e293b); border: 1px solid rgba(99,102,241,0.15); padding: 18px; border-radius: 14px; margin-bottom: 14px;">
                             <input type="text" id="ludo-room-code-input" class="form-input" placeholder="e.g. 12345678" 
-                                style="text-align: center; font-size: 1.2rem; letter-spacing: 2px; font-weight: 600; margin-bottom: 10px;">
-                            <button class="btn btn-primary btn-block" onclick="shareRoomCode('${match.id}')">
+                                style="text-align: center; font-size: 1.3rem; letter-spacing: 4px; font-weight: 700; margin-bottom: 14px; background: rgba(255,255,255,0.04); border: 1px solid rgba(99,102,241,0.2); color: #e2e8f0; border-radius: 10px; padding: 14px;">
+                            <button class="btn btn-primary btn-block" onclick="shareRoomCode('${match.id}')"
+                                style="background: linear-gradient(135deg, #22c55e, #16a34a); border: none; padding: 14px; border-radius: 10px; font-weight: 600;">
                                 <i class="fa-solid fa-share"></i> Share Room Code
                             </button>
                         </div>
-                        <button class="btn btn-outline btn-block" onclick="hideRoomCodeInputScreen('${match.id}')" style="margin-top: 10px;">
-                            <i class="fa-solid fa-arrow-left"></i> Back to Details
+                        <button class="btn btn-outline btn-block" onclick="hideRoomCodeInputScreen('${match.id}')" style="padding: 10px; color: #64748b; border-color: rgba(107,114,128,0.15);">
+                            <i class="fa-solid fa-arrow-left"></i> Back
                         </button>
                     </div>
                 `;
             } else {
-                // Acceptor sees match details with rules - waits for room code
-                const creatorName = match.creator?.ludoKingUsername || match.creator?.username || 'creator';
+                // Acceptor view: waiting for room code
                 statusHtml = `
-                    <div style="padding: 10px;">
-                        <!-- Header with Players -->
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; background: linear-gradient(135deg, #dc2626, #b91c1c); padding: 12px; border-radius: 10px;">
-                            <div style="text-align: center; flex: 1;">
-                                <div style="font-weight: 700; color: white;">${creatorName}</div>
-                                <div style="font-size: 0.8rem; color: rgba(255,255,255,0.8);">Challenged</div>
-                                <div style="font-weight: 700; color: #fbbf24;">₹${match.amount}</div>
+                    <div style="padding: 12px;">
+                        ${buildVSCard(creatorName, 'Challenger', myName, 'You')}
+                        
+                        <div style="background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.04)); border: 1px solid rgba(99,102,241,0.15); border-radius: 12px; padding: 16px; margin-bottom: 14px; text-align: center;">
+                            <div style="width: 40px; height: 40px; background: linear-gradient(135deg, #6366f1, #818cf8); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; animation: pulse 2s ease-in-out infinite;">
+                                <i class="fa-solid fa-spinner fa-spin" style="color: white; font-size: 0.9rem;"></i>
                             </div>
-                            <div style="color: white; font-weight: 700; padding: 0 15px;">VS</div>
-                            <div style="text-align: center; flex: 1;">
-                                <div style="font-weight: 700; color: white;">${match.acceptor?.ludoKingUsername || 'You'}</div>
-                                <div style="font-size: 0.8rem; color: rgba(255,255,255,0.8);">Winning</div>
-                                <div style="font-weight: 700; color: #4ade80;">₹${(match.amount * 2 * (1 - LUDO_COMMISSION_PERCENT / 100)).toFixed(0)}</div>
-                            </div>
+                            <div style="font-weight: 600; color: #a5b4fc; font-size: 0.88rem;">Waiting for Room Code</div>
+                            <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">${escapeHtmlLudo(creatorName)} is creating the room...</div>
                         </div>
                         
-                        <!-- Waiting for Room Code Status -->
-                        <div style="background: linear-gradient(135deg, #6366f1, #4f46e5); padding: 15px; border-radius: 10px; margin-bottom: 15px; text-align: center;">
-                            <i class="fa-solid fa-spinner fa-spin" style="color: white; font-size: 1.2rem;"></i>
-                            <div style="color: white; font-weight: 600; margin-top: 8px;">Waiting for ${creatorName} to share Room Code...</div>
-                            <div style="color: rgba(255,255,255,0.7); font-size: 0.8rem; margin-top: 5px;">You will be notified once room code is available</div>
-                        </div>
+                        ${buildRulesSection('acceptor')}
                         
-                        <!-- Rules Section -->
-                        <div style="background: #fff5f5; border: 1px solid #fecaca; border-radius: 10px; padding: 12px; margin-bottom: 10px;">
-                            <div style="font-weight: 700; color: #dc2626; margin-bottom: 10px; text-align: center;">📋 RULES & GUIDELINES</div>
-                            <ol style="padding-left: 18px; margin: 0; font-size: 0.75rem; color: #374151; line-height: 1.7;">
-                                <li>Victory? Take a screenshot of the win screen in Ludo King, tap Won, and upload your proof.</li>
-                                <li>Defeat? Simply tap Lost to confirm. <strong style="color: #dc2626;">Not reporting = ₹25 penalty from wallet.</strong></li>
-                                <li>Result submission deadline: 2 hours from when Room Code was shared.</li>
-                                <li>Opponent not responding? Your prize will be credited within 2-4 hours after you upload proof.</li>
-                                <li>Always record your gameplay for safety and dispute resolution.</li>
-                                <li>Questions? JeetoPlay support is here to help.</li>
-                                <li>You need the Ludo King app installed to play.</li>
-                                <li>Challenger has 15 mins to share room code. <strong style="color: #dc2626;">Delay = ₹25 penalty + auto-cancellation with full refund to you.</strong></li>
-                                <li>Quick Mode and 5-6 player modes are prohibited on JeetoPlay.</li>
-                                <li>Ensure both players agree on and play the same game mode.</li>
-                            </ol>
-                        </div>
-                        
-                        <!-- Cancel Button for Acceptor (PAIRED state - game not started) -->
-                        <div style="margin-top: 10px;">
-                            <button class="btn btn-outline btn-block" onclick="cancelMyChallenge('${match.id}')" style="border-color: #6b7280; color: #6b7280;">
-                                <i class="fa-solid fa-times"></i> Cancel Match
-                            </button>
-                        </div>
+                        <button class="btn btn-outline btn-block" onclick="cancelMyChallenge('${match.id}')" 
+                            style="padding: 10px; border-color: rgba(107,114,128,0.15); color: #64748b; font-size: 0.8rem;">
+                            <i class="fa-solid fa-times"></i> Cancel Match
+                        </button>
                     </div>
                 `;
             }
@@ -1035,36 +1160,33 @@ function renderActiveLudo(match) {
         case 'ROOM_SHARED':
         case 'IN_PROGRESS':
             statusColor = '#10b981';
-            statusIcon = 'fa-gamepad';
             const myResult = isCreator ? match.result?.creator : match.result?.acceptor;
             const opponentResult = isCreator ? match.result?.acceptor : match.result?.creator;
             const hasSubmitted = !!myResult;
             const opponentDisputed = opponentResult?.type === 'DISPUTE';
             const opponentClaimedWon = opponentResult?.type === 'WON';
-
-            // Get result type for display
             const resultTypeDisplay = hasSubmitted ? (myResult?.type || myResult) : null;
 
-            // Build opponent dispute banner
+            // Opponent alert banners
             let opponentDisputeBanner = '';
             if (!hasSubmitted && opponentDisputed) {
                 opponentDisputeBanner = `
-                    <div style="background: linear-gradient(135deg, #fef3c7, #fde68a); border: 2px solid #f59e0b; border-radius: 10px; padding: 12px; margin-bottom: 15px; text-align: center;">
-                        <div style="font-size: 1.1rem; margin-bottom: 5px;">⚠️</div>
-                        <div style="font-weight: 700; color: #92400e; margin-bottom: 5px;">Opponent Raised a Dispute</div>
-                        <div style="font-size: 0.85rem; color: #78350f;">
-                            Your opponent has disputed this match. Please submit YOUR result below within 2 hours.
+                    <div style="background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(245,158,11,0.04)); border: 1px solid rgba(245,158,11,0.2); border-radius: 12px; padding: 14px; margin-bottom: 14px; text-align: center;">
+                        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 6px;">
+                            <i class="fa-solid fa-triangle-exclamation" style="color: #fbbf24;"></i>
+                            <span style="font-weight: 600; color: #fbbf24; font-size: 0.85rem;">Opponent Raised a Dispute</span>
                         </div>
+                        <div style="font-size: 0.78rem; color: #94a3b8;">Please submit YOUR result below within 2 hours.</div>
                     </div>
                 `;
             } else if (!hasSubmitted && opponentClaimedWon) {
                 opponentDisputeBanner = `
-                    <div style="background: linear-gradient(135deg, #dbeafe, #bfdbfe); border: 2px solid #3b82f6; border-radius: 10px; padding: 12px; margin-bottom: 15px; text-align: center;">
-                        <div style="font-size: 1.1rem; margin-bottom: 5px;">🏆</div>
-                        <div style="font-weight: 700; color: #1e40af; margin-bottom: 5px;">Opponent Claims Victory</div>
-                        <div style="font-size: 0.85rem; color: #1e3a5f;">
-                            Your opponent says they won. Submit YOUR result below within 2 hours.
+                    <div style="background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(59,130,246,0.04)); border: 1px solid rgba(59,130,246,0.2); border-radius: 12px; padding: 14px; margin-bottom: 14px; text-align: center;">
+                        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 6px;">
+                            <i class="fa-solid fa-trophy" style="color: #60a5fa;"></i>
+                            <span style="font-weight: 600; color: #60a5fa; font-size: 0.85rem;">Opponent Claims Victory</span>
                         </div>
+                        <div style="font-size: 0.78rem; color: #94a3b8;">Submit YOUR result below within 2 hours.</div>
                     </div>
                 `;
             }
@@ -1075,80 +1197,87 @@ function renderActiveLudo(match) {
             const iSentCancelRequest = cancelReq?.requestedBy === state.user?.uid;
             const opponentSentCancelRequest = hasCancelRequest && !iSentCancelRequest;
 
-            // Build cancel UI section
+            // Cancel request UI
             let cancelHtml = '';
             if (opponentSentCancelRequest) {
-                // Opponent sent cancel request - show accept/reject
                 cancelHtml = `
-                    <div style="background: linear-gradient(135deg, #fef3c7, #fde68a); border: 2px solid #f59e0b; border-radius: 12px; padding: 15px; margin-top: 15px; text-align: center;">
-                        <div style="font-size: 1.2rem; margin-bottom: 8px;">🤝</div>
-                        <div style="font-weight: 700; color: #92400e; margin-bottom: 5px;">Cancel Request from Opponent</div>
-                        <div style="font-size: 0.85rem; color: #78350f; margin-bottom: 12px;">
-                            Your opponent wants to mutually cancel this match. Both players will be fully refunded.
+                    <div style="background: linear-gradient(135deg, rgba(245,158,11,0.08), rgba(245,158,11,0.03)); border: 1px solid rgba(245,158,11,0.18); border-radius: 12px; padding: 14px; margin-top: 14px; text-align: center;">
+                        <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px;">
+                            <i class="fa-solid fa-handshake" style="color: #fbbf24;"></i>
+                            <span style="font-weight: 600; color: #fbbf24; font-size: 0.85rem;">Cancel Request Received</span>
                         </div>
+                        <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 12px;">Opponent wants to mutually cancel. Both get full refund.</div>
                         <div style="display: flex; gap: 10px;">
-                            <button class="btn btn-block" onclick="acceptMutualCancel('${match.id}')" style="padding: 12px; background: #10b981; color: white; flex: 1;">
-                                <i class="fa-solid fa-check"></i> Accept & Refund
+                            <button class="btn btn-block" onclick="acceptMutualCancel('${match.id}')" 
+                                style="flex: 1; padding: 12px; background: linear-gradient(135deg, #22c55e, #16a34a); color: white; border: none; border-radius: 10px; font-weight: 600; font-size: 0.82rem;">
+                                <i class="fa-solid fa-check"></i> Accept
                             </button>
-                            <button class="btn btn-block" onclick="rejectMutualCancel('${match.id}')" style="padding: 12px; background: #ef4444; color: white; flex: 1;">
+                            <button class="btn btn-block" onclick="rejectMutualCancel('${match.id}')" 
+                                style="flex: 1; padding: 12px; background: linear-gradient(135deg, #ef4444, #dc2626); color: white; border: none; border-radius: 10px; font-weight: 600; font-size: 0.82rem;">
                                 <i class="fa-solid fa-times"></i> Reject
                             </button>
                         </div>
                     </div>
                 `;
             } else if (iSentCancelRequest) {
-                // We sent cancel request - show waiting status
                 cancelHtml = `
-                    <div style="background: var(--bg-hover); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 15px; text-align: center;">
-                        <i class="fa-solid fa-hourglass-half" style="color: #f59e0b;"></i>
-                        <span style="font-size: 0.9rem; color: var(--text-muted); margin-left: 5px;">Cancel request sent. Waiting for opponent...</span>
+                    <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 12px; margin-top: 14px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        <i class="fa-solid fa-hourglass-half" style="color: #fbbf24; font-size: 0.8rem;"></i>
+                        <span style="font-size: 0.8rem; color: #94a3b8;">Cancel request sent — waiting for opponent...</span>
                     </div>
                 `;
             } else if (!hasSubmitted) {
-                // No cancel request yet - show request button
                 cancelHtml = `
-                    <button class="btn btn-outline btn-block" onclick="cancelMyChallenge('${match.id}')" style="padding: 10px; margin-top: 10px; font-size: 0.85rem; color: var(--text-muted);">
+                    <button class="btn btn-outline btn-block" onclick="cancelMyChallenge('${match.id}')" 
+                        style="padding: 10px; margin-top: 12px; font-size: 0.8rem; color: #64748b; border-color: rgba(107,114,128,0.12);">
                         <i class="fa-solid fa-handshake-slash"></i> Request Mutual Cancel
                     </button>
                 `;
             }
 
             statusHtml = `
-                <div style="text-align: center; padding: 15px;">
-                    <div style="color: ${statusColor}; margin-bottom: 15px;">
-                        <i class="fa-solid ${statusIcon}"></i> Playing vs <strong>${opponentName}</strong>
-                    </div>
+                <div style="padding: 12px;">
+                    ${buildVSCard(isCreator ? myName : creatorName, isCreator ? 'Challenger' : 'Challenger', isCreator ? opponentName : myName, isCreator ? 'Opponent' : 'You')}
                     
-                    <div style="background: linear-gradient(135deg, #1a1a2e, #16213e); padding: 20px; border-radius: 12px; margin-bottom: 15px;">
-                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 5px;">Room Code</div>
-                        <div style="font-size: 1.8rem; font-weight: 700; letter-spacing: 3px; color: var(--primary); font-family: monospace;">
+                    <!-- Room Code with glow -->
+                    <div style="background: linear-gradient(135deg, #0f172a, #1e293b); border: 1px solid rgba(34,197,94,0.18); border-radius: 14px; padding: 18px; margin-bottom: 14px; text-align: center; position: relative; overflow: hidden;">
+                        <div style="position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 40%; height: 2px; background: linear-gradient(90deg, transparent, #22c55e, transparent);"></div>
+                        <div style="font-size: 0.68rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;">Room Code</div>
+                        <div style="font-size: 1.7rem; font-weight: 800; letter-spacing: 4px; color: #22c55e; font-family: monospace; text-shadow: 0 0 18px rgba(34,197,94,0.25);">
                             ${match.roomCode || 'N/A'}
                         </div>
-                        <button onclick="copyToClipboard('${match.roomCode}')" class="btn btn-sm" style="margin-top: 10px; background: var(--bg-hover);">
+                        <button onclick="copyToClipboard('${match.roomCode}')" class="btn btn-sm" 
+                            style="margin-top: 10px; background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.18); color: #22c55e; padding: 6px 16px; border-radius: 8px; font-size: 0.75rem;">
                             <i class="fa-solid fa-copy"></i> Copy Code
                         </button>
                     </div>
                     
                     ${opponentDisputeBanner}
                     ${hasSubmitted ? `
-                        <div style="color: var(--text-muted); padding: 15px; background: var(--bg-hover); border-radius: 10px;">
-                            <i class="fa-solid fa-check-circle" style="color: var(--success);"></i>
-                            Result submitted: <strong>${resultTypeDisplay}</strong>
-                            <div style="font-size: 0.85rem; margin-top: 5px;">Waiting for opponent (2hr limit)...</div>
+                        <div style="background: linear-gradient(135deg, rgba(34,197,94,0.06), rgba(34,197,94,0.02)); border: 1px solid rgba(34,197,94,0.15); border-radius: 12px; padding: 16px; text-align: center;">
+                            <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 6px;">
+                                <i class="fa-solid fa-circle-check" style="color: #22c55e;"></i>
+                                <span style="font-weight: 600; color: #22c55e; font-size: 0.88rem;">Result Submitted</span>
+                            </div>
+                            <div style="font-size: 0.82rem; color: #94a3b8;">You reported: <strong style="color: #e2e8f0;">${resultTypeDisplay}</strong></div>
+                            <div style="font-size: 0.75rem; color: #64748b; margin-top: 6px;"><i class="fa-solid fa-clock"></i> Waiting for opponent (2hr limit)...</div>
                         </div>
                     ` : `
-                        <div style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 15px;">
-                            Play the match in Ludo King and submit your result
+                        <div style="font-size: 0.8rem; color: #94a3b8; text-align: center; margin-bottom: 14px;">
+                            <i class="fa-solid fa-gamepad" style="margin-right: 4px;"></i> Play the match in Ludo King and submit your result
                         </div>
                         <div style="display: flex; flex-direction: column; gap: 10px;">
-                            <button class="btn btn-danger btn-block" onclick="submitLost('${match.id}')" style="padding: 15px;">
-                                <i class="fa-solid fa-thumbs-down"></i> I Lost
+                            <button class="btn btn-block" onclick="submitLost('${match.id}')" 
+                                style="padding: 14px; background: linear-gradient(135deg, rgba(239,68,68,0.1), rgba(239,68,68,0.04)); border: 1px solid rgba(239,68,68,0.2); color: #f87171; border-radius: 12px; font-weight: 600; font-size: 0.85rem;">
+                                <i class="fa-solid fa-flag"></i> I Lost
                             </button>
-                            <button class="btn btn-success btn-block" onclick="showResultModal('${match.id}', 'WON')" style="padding: 15px;">
-                                <i class="fa-solid fa-trophy"></i> I Won (Upload Proof)
+                            <button class="btn btn-block" onclick="showResultModal('${match.id}', 'WON')" 
+                                style="padding: 14px; background: linear-gradient(135deg, #22c55e, #16a34a); border: none; color: white; border-radius: 12px; font-weight: 600; font-size: 0.85rem; box-shadow: 0 4px 12px rgba(34,197,94,0.2);">
+                                <i class="fa-solid fa-trophy"></i> I Won — Upload Proof
                             </button>
-                            <button class="btn btn-warning btn-block" onclick="showResultModal('${match.id}', 'DISPUTE')" style="padding: 15px; background: #f59e0b;">
-                                <i class="fa-solid fa-exclamation-triangle"></i> Raise Dispute
+                            <button class="btn btn-block" onclick="showResultModal('${match.id}', 'DISPUTE')" 
+                                style="padding: 14px; background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(245,158,11,0.04)); border: 1px solid rgba(245,158,11,0.2); color: #fbbf24; border-radius: 12px; font-weight: 600; font-size: 0.85rem;">
+                                <i class="fa-solid fa-triangle-exclamation"></i> Raise Dispute
                             </button>
                         </div>
                     `}
@@ -1159,81 +1288,187 @@ function renderActiveLudo(match) {
 
         case 'DISPUTED':
             statusColor = '#ef4444';
-            statusIcon = 'fa-exclamation-triangle';
             statusHtml = `
-                <div style="text-align: center; padding: 20px;">
-                    <div style="color: ${statusColor}; margin-bottom: 15px;">
-                        <i class="fa-solid ${statusIcon}" style="font-size: 2rem;"></i>
+                <div style="text-align: center; padding: 24px;">
+                    <div style="width: 52px; height: 52px; background: linear-gradient(135deg, rgba(239,68,68,0.12), rgba(239,68,68,0.04)); border: 2px solid rgba(239,68,68,0.25); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px;">
+                        <i class="fa-solid fa-gavel" style="color: #f87171; font-size: 1.2rem;"></i>
                     </div>
-                    <div style="font-weight: 600; margin-bottom: 10px;">Match Disputed</div>
-                    <div style="color: var(--text-muted); font-size: 0.9rem;">
-                        Results conflict. Admin will review and resolve this dispute.
-                    </div>
-                    <div style="margin-top: 15px; padding: 10px; background: var(--bg-hover); border-radius: 8px; font-size: 0.85rem;">
-                        <i class="fa-solid fa-clock"></i> Please wait for resolution
+                    <div style="font-weight: 600; color: #f87171; margin-bottom: 6px;">Match Under Review</div>
+                    <div style="color: #94a3b8; font-size: 0.82rem; margin-bottom: 16px;">Results conflict — admin will review and resolve.</div>
+                    <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        <i class="fa-solid fa-clock" style="color: #64748b;"></i>
+                        <span style="font-size: 0.8rem; color: #94a3b8;">Please wait for resolution</span>
                     </div>
                 </div>
             `;
             break;
 
-        case 'COMPLETED':
+        case 'COMPLETED': {
             const isWinner = match.winner === state.user?.uid;
-            statusColor = isWinner ? '#10b981' : '#6b7280';
-            statusIcon = isWinner ? 'fa-trophy' : 'fa-flag-checkered';
+            statusColor = isWinner ? '#22c55e' : '#6b7280';
+            const hasRematch = !!match.rematchId;
+            const rematchBtn = hasRematch
+                ? `<div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 12px; margin-top: 16px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                       <i class="fa-solid fa-check-circle" style="color: #6366f1;"></i>
+                       <span style="font-size: 0.82rem; color: #94a3b8;">Rematch sent</span>
+                   </div>`
+                : `<button class="btn btn-block" onclick="sendRematch('${match.id}')" 
+                       style="margin-top: 16px; padding: 14px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; border: none; border-radius: 12px; font-weight: 600; box-shadow: 0 4px 12px rgba(99,102,241,0.25);">
+                       <i class="fa-solid fa-rotate"></i> Rematch 🪙 ${match.amount}
+                   </button>`;
             statusHtml = `
-                <div style="text-align: center; padding: 20px;">
-                    <div style="font-size: 2rem; margin-bottom: 10px;">
-                        ${isWinner ? '🎉' : '😔'}
+                <div style="text-align: center; padding: 24px;">
+                    ${isWinner ? `
+                        <div style="font-size: 2.2rem; margin-bottom: 8px;">🎉</div>
+                        <div style="font-weight: 700; font-size: 1.05rem; background: linear-gradient(135deg, #22c55e, #4ade80); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 8px;">Victory!</div>
+                        <div style="font-size: 1.4rem; font-weight: 800; color: #22c55e; text-shadow: 0 0 18px rgba(34,197,94,0.25);">🪙 ${(match.winAmount || 0).toFixed(2)}</div>
+                        <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">credited to your wallet</div>
+                    ` : `
+                        <div style="font-size: 2.2rem; margin-bottom: 8px;">🎮</div>
+                        <div style="font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Match Complete</div>
+                        <div style="background: linear-gradient(135deg, rgba(99,102,241,0.06), rgba(99,102,241,0.02)); border: 1px solid rgba(99,102,241,0.12); border-radius: 10px; padding: 10px; display: inline-block;">
+                            <span style="font-size: 0.8rem; color: #a5b4fc;"><i class="fa-solid fa-star" style="margin-right: 4px;"></i> Every game is practice — comeback stronger!</span>
+                        </div>
+                    `}
+                    ${rematchBtn}
+                </div>
+            `;
+            break;
+        }
+
+        case 'REMATCH_PENDING': {
+            statusColor = '#6366f1';
+            const isSender = match.rematchSender === state.user?.uid;
+            const rematchOpponent = isSender
+                ? (match.acceptor?.uid === match.rematchReceiver ? match.acceptor?.ludoKingUsername : match.creator?.ludoKingUsername)
+                : (match.creator?.uid === match.rematchSender ? match.creator?.ludoKingUsername : match.acceptor?.ludoKingUsername);
+            statusHtml = isSender ? `
+                <div style="text-align: center; padding: 24px;">
+                    <div style="width: 52px; height: 52px; background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(99,102,241,0.04)); border: 2px solid rgba(99,102,241,0.25); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; animation: pulse 2s ease-in-out infinite;">
+                        <i class="fa-solid fa-rotate" style="color: #818cf8; font-size: 1.2rem;"></i>
                     </div>
-                    <div style="font-weight: 600; color: ${statusColor};">
-                        ${isWinner ? `You Won ₹${(match.winAmount || 0).toFixed(2)}!` : 'Better luck next time!'}
+                    <div style="font-weight: 600; color: #a5b4fc; margin-bottom: 6px;">Rematch Sent</div>
+                    <div style="color: #94a3b8; font-size: 0.82rem; margin-bottom: 16px;">
+                        Waiting for <strong style="color: #818cf8;">${escapeHtmlLudo(rematchOpponent || 'Opponent')}</strong> to accept
+                    </div>
+                    <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 14px;">
+                        <i class="fa-solid fa-clock" style="color: #64748b;"></i>
+                        <span style="font-size: 0.78rem; color: #94a3b8;">Expires in 5 minutes</span>
+                    </div>
+                    <button class="btn btn-outline btn-block" onclick="declineRematch('${match.id}')" 
+                        style="padding: 10px; color: #64748b; border-color: rgba(107,114,128,0.15); font-size: 0.82rem;">
+                        <i class="fa-solid fa-times"></i> Cancel Rematch
+                    </button>
+                </div>
+            ` : `
+                <div style="text-align: center; padding: 24px;">
+                    <div style="font-size: 2rem; margin-bottom: 10px;">🔥</div>
+                    <div style="font-weight: 600; color: #a5b4fc; margin-bottom: 6px;">Rematch Challenge!</div>
+                    <div style="color: #94a3b8; font-size: 0.82rem; margin-bottom: 4px;">
+                        <strong style="color: #818cf8;">${escapeHtmlLudo(rematchOpponent || 'Opponent')}</strong> wants a rematch
+                    </div>
+                    <div style="font-size: 1.4rem; font-weight: 800; color: #22c55e; margin: 12px 0; text-shadow: 0 0 18px rgba(34,197,94,0.25);">🪙 ${match.amount}</div>
+                    <div style="display: flex; gap: 10px; margin-top: 16px;">
+                        <button class="btn btn-block" onclick="acceptRematch('${match.id}', ${match.amount})" 
+                            style="flex: 1; padding: 14px; background: linear-gradient(135deg, #22c55e, #16a34a); color: white; border: none; border-radius: 12px; font-weight: 600; box-shadow: 0 4px 12px rgba(34,197,94,0.2);">
+                            <i class="fa-solid fa-check"></i> Accept
+                        </button>
+                        <button class="btn btn-block" onclick="declineRematch('${match.id}')" 
+                            style="flex: 1; padding: 14px; background: linear-gradient(135deg, #ef4444, #dc2626); color: white; border: none; border-radius: 12px; font-weight: 600;">
+                            <i class="fa-solid fa-times"></i> Decline
+                        </button>
                     </div>
                 </div>
             `;
             break;
+        }
 
         case 'CANCELLED':
+        case 'EXPIRED':
+        case 'EXPIRING':
             statusColor = '#6b7280';
-            statusIcon = 'fa-ban';
             statusHtml = `
-                <div style="text-align: center; padding: 20px;">
-                    <div style="font-size: 2rem; margin-bottom: 10px;">❌</div>
-                    <div style="font-weight: 600; color: ${statusColor};">Match Cancelled</div>
-                    <div style="color: var(--text-muted); font-size: 0.9rem; margin-top: 8px;">
-                        Your entry fee has been refunded to your wallet.
+                <div style="text-align: center; padding: 24px;">
+                    <div style="width: 52px; height: 52px; background: rgba(107,114,128,0.08); border: 2px solid rgba(107,114,128,0.18); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px;">
+                        <i class="fa-solid fa-ban" style="color: #6b7280; font-size: 1.2rem;"></i>
                     </div>
+                    <div style="font-weight: 600; color: #94a3b8;">Match Cancelled</div>
+                    <div style="color: #64748b; font-size: 0.82rem; margin-top: 6px;">Your entry fee has been refunded to your wallet.</div>
                 </div>
             `;
             break;
 
         case 'CANCELLING':
             statusColor = '#f59e0b';
-            statusIcon = 'fa-spinner fa-spin';
             statusHtml = `
-                <div style="text-align: center; padding: 20px;">
-                    <i class="fa-solid fa-spinner fa-spin" style="font-size: 1.5rem; color: ${statusColor};"></i>
-                    <div style="font-weight: 600; color: ${statusColor}; margin-top: 10px;">Cancelling...</div>
-                    <div style="color: var(--text-muted); font-size: 0.85rem; margin-top: 5px;">Processing refund...</div>
+                <div style="text-align: center; padding: 24px;">
+                    <i class="fa-solid fa-spinner fa-spin" style="font-size: 1.4rem; color: #fbbf24;"></i>
+                    <div style="font-weight: 600; color: #fbbf24; margin-top: 10px;">Cancelling...</div>
+                    <div style="color: #94a3b8; font-size: 0.82rem; margin-top: 5px;">Processing your refund</div>
                 </div>
             `;
             break;
 
         default:
-            statusHtml = `<div style="padding: 15px; text-align: center;">Unknown status: ${match.status}</div>`;
+            statusHtml = `<div style="padding: 15px; text-align: center; color: #94a3b8;">Unknown status: ${match.status}</div>`;
     }
 
-    div.innerHTML = `
-        <div style="background: var(--bg-card); border: 2px solid ${statusColor}; border-radius: 16px; overflow: hidden;">
-            <div style="background: linear-gradient(135deg, ${statusColor}22, ${statusColor}11); padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-weight: 600; color: ${statusColor};">
-                    <i class="fa-solid fa-dice"></i> Match #${match.matchId || match.id.slice(-8)}
-                </span>
-                <span style="font-weight: 700; font-size: 1.1rem;">₹${match.amount}</span>
-            </div>
-            ${statusHtml}
-        </div>
-    `;
+    div.innerHTML = statusHtml;
 }
+
+// ─── Rematch Functions ─────────────────────────────────────
+
+window.sendRematch = async function (matchId) {
+    try {
+        const btn = event?.target?.closest('button');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending...'; }
+        const sendRematchFn = firebase.functions().httpsCallable('sendRematch');
+        const result = await sendRematchFn({ matchId });
+        if (result.data.success) {
+            showToast('🔄 Rematch request sent!', 'success');
+        }
+    } catch (err) {
+        showToast(err.message || 'Failed to send rematch', 'error');
+        const btn = event?.target?.closest('button');
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Rematch'; }
+    }
+};
+
+window.acceptRematch = async function (matchId, amount) {
+    try {
+        const btn = event?.target?.closest('button');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Accepting...'; }
+        const acceptRematchFn = firebase.functions().httpsCallable('acceptRematch');
+        const result = await acceptRematchFn({ matchId });
+        if (result.data.success) {
+            showToast('✅ Rematch accepted! Waiting for room code...', 'success');
+            // Update local balance display
+            if (state.userData) {
+                state.userData.depositBalance = result.data.newDepositBalance;
+                state.userData.winningBalance = result.data.newWinningBalance;
+                if (typeof updateUIHeader === 'function') updateUIHeader();
+            }
+        }
+    } catch (err) {
+        showToast(err.message || 'Failed to accept rematch', 'error');
+        const btn = event?.target?.closest('button');
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-check"></i> Accept'; }
+    }
+};
+
+window.declineRematch = async function (matchId) {
+    try {
+        const btn = event?.target?.closest('button');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+        const declineRematchFn = firebase.functions().httpsCallable('declineRematch');
+        await declineRematchFn({ matchId });
+        showToast('Rematch declined', 'info');
+    } catch (err) {
+        showToast(err.message || 'Failed to decline rematch', 'error');
+        const btn = event?.target?.closest('button');
+        if (btn) { btn.disabled = false; }
+    }
+};
 
 // Helper: Copy to clipboard
 window.copyToClipboard = function (text) {
@@ -1253,7 +1488,7 @@ function loadProfile() {
     document.getElementById('profile-uid').innerText = state.user.uid;
     // Use split wallet balance (consistent with updateUIHeader)
     const totalBal = (state.userData.depositBalance || 0) + (state.userData.winningBalance || 0);
-    document.getElementById('profile-balance').innerText = '₹' + totalBal;
+    document.getElementById('profile-balance').innerHTML = formatCoin(totalBal);
 
     // Load ranking card data
     loadMyRanking();
@@ -1276,7 +1511,7 @@ function loadProfile() {
                     <div style="font-size:0.75rem; color:#666">${new Date(txn.timestamp).toLocaleDateString()}</div>
                 </div>
                 <div class="${txn.type === 'CREDIT' ? 'text-success' : 'text-danger'}">
-                    ${txn.type === 'CREDIT' ? '+' : '-'}₹${txn.amount}
+                    ${txn.type === 'CREDIT' ? '+' : '-'}${formatCoinText(txn.amount)}
                 </div>
             `;
             div.appendChild(row);

@@ -56,7 +56,8 @@ async function loadLeaderboard() {
                     name: u.fullName || 'Player',
                     winnings: u.stats?.[field] || 0,
                     matchesPlayed: u.stats?.matchesPlayed || 0,
-                    matchesWon: u.stats?.matchesWon || 0
+                    matchesWon: u.stats?.matchesWon || 0,
+                    isVip: !!(u.vip && u.vip.active && u.vip.expiresAt > Date.now())
                 }))
                 .sort((a, b) => b.winnings - a.winnings)
                 .slice(0, 50);
@@ -144,14 +145,15 @@ function renderPodium(top3, container) {
     container.innerHTML = ordered.map(user => {
         const initial = (user.name || 'P').charAt(0).toUpperCase();
         const level = getUserLevel(user.winnings);
+        const vipBadge = user.isVip && typeof getVipBadgeHtml === 'function' ? getVipBadgeHtml(true) : '';
         return `
             <div class="lb-podium-item rank-${user.rank}">
                 <div style="position: relative;">
                     <div class="lb-podium-avatar">${initial}</div>
                     <div class="lb-podium-rank-badge">${user.rank}</div>
                 </div>
-                <div class="lb-podium-name">${user.name}</div>
-                <div class="lb-podium-wins">₹${user.winnings.toLocaleString()}</div>
+                <div class="lb-podium-name">${user.name}${vipBadge}</div>
+                <div class="lb-podium-wins">${formatCoin(user.winnings)}</div>
                 <div class="lb-podium-pedestal">
                     <span class="lb-rank-level ${level.class}" style="font-size: 0.55rem;">${level.tier}</span>
                 </div>
@@ -168,15 +170,16 @@ function renderRankList(users, container) {
         const initial = (user.name || 'P').charAt(0).toUpperCase();
         const level = getUserLevel(user.winnings);
         const delay = Math.min(i * 50, 500);
+        const vipBadge = user.isVip && typeof getVipBadgeHtml === 'function' ? getVipBadgeHtml(true) : '';
         return `
             <div class="lb-rank-item" style="animation-delay: ${delay}ms;">
                 <div class="lb-rank-num">#${rank}</div>
                 <div class="lb-rank-avatar">${initial}</div>
                 <div class="lb-rank-info">
-                    <div class="lb-rank-name">${user.name}</div>
+                    <div class="lb-rank-name">${user.name}${vipBadge}</div>
                     <span class="lb-rank-level ${level.class}">${level.icon} ${level.tier}</span>
                 </div>
-                <div class="lb-rank-winnings">₹${user.winnings.toLocaleString()}</div>
+                <div class="lb-rank-winnings">${formatCoin(user.winnings)}</div>
             </div>
         `;
     }).join('');
@@ -212,7 +215,7 @@ function updateMyRankDisplay(rankedUsers) {
 
     // Leaderboard my-rank banner
     document.getElementById('lb-my-rank-num').textContent = '#' + myRank;
-    document.getElementById('lb-my-winnings').textContent = '₹' + myWinnings.toLocaleString();
+    document.getElementById('lb-my-winnings').innerHTML = formatCoin(myWinnings);
     const lbBadge = document.getElementById('lb-my-level-badge');
     lbBadge.textContent = level.icon + ' ' + level.tier;
     lbBadge.className = 'lb-rank-level ' + level.class;
@@ -223,7 +226,7 @@ function updateMyRankDisplay(rankedUsers) {
     const profileRankPlayed = document.getElementById('profile-rank-played');
     const profileRankBadge = document.getElementById('profile-rank-badge');
     if (profileRankNum) profileRankNum.textContent = '#' + myRank;
-    if (profileRankWin) profileRankWin.textContent = '₹' + myWinnings.toLocaleString();
+    if (profileRankWin) profileRankWin.innerHTML = formatCoin(myWinnings);
     if (profileRankPlayed) profileRankPlayed.textContent = myPlayed;
     if (profileRankBadge) {
         profileRankBadge.textContent = level.icon + ' ' + level.tier;
@@ -257,7 +260,7 @@ async function loadMyRanking() {
         const profileRankPlayed = document.getElementById('profile-rank-played');
         const profileRankBadge = document.getElementById('profile-rank-badge');
         if (profileRankNum) profileRankNum.textContent = '#' + myRank;
-        if (profileRankWin) profileRankWin.textContent = '₹' + myWinnings.toLocaleString();
+        if (profileRankWin) profileRankWin.innerHTML = formatCoin(myWinnings);
         if (profileRankPlayed) profileRankPlayed.textContent = stats.matchesPlayed || 0;
         if (profileRankBadge) {
             profileRankBadge.textContent = level.icon + ' ' + level.tier;

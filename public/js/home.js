@@ -49,7 +49,7 @@ window.openContactModal = async function () {
 
         container.innerHTML = '';
 
-        // Email
+        // Email (mailto: works natively on all platforms — no change needed)
         if (contact.email) {
             container.innerHTML += `
                 <a href="mailto:${contact.email}" class="btn btn-outline" style="display: flex; align-items: center; gap: 12px; justify-content: flex-start; text-decoration: none;">
@@ -58,34 +58,34 @@ window.openContactModal = async function () {
                 </a>`;
         }
 
-        // Telegram
+        // Telegram — opens in Telegram app externally
         if (contact.telegram) {
             const telegramUrl = contact.telegram.startsWith('http') ? contact.telegram : 'https://t.me/' + contact.telegram;
             container.innerHTML += `
-                <a href="${telegramUrl}" target="_blank" class="btn btn-outline" style="display: flex; align-items: center; gap: 12px; justify-content: flex-start; text-decoration: none;">
+                <div onclick="openExternalUrl('${telegramUrl}')" class="btn btn-outline" style="display: flex; align-items: center; gap: 12px; justify-content: flex-start; cursor: pointer;">
                     <i class="fa-brands fa-telegram" style="color: #0088cc; font-size: 1.2rem;"></i>
                     <span>Telegram</span>
-                </a>`;
+                </div>`;
         }
 
-        // Instagram
+        // Instagram — opens in Instagram app externally
         if (contact.instagram) {
             const instaHandle = contact.instagram.replace('@', '');
             container.innerHTML += `
-                <a href="https://instagram.com/${instaHandle}" target="_blank" class="btn btn-outline" style="display: flex; align-items: center; gap: 12px; justify-content: flex-start; text-decoration: none;">
+                <div onclick="openExternalUrl('https://instagram.com/${instaHandle}')" class="btn btn-outline" style="display: flex; align-items: center; gap: 12px; justify-content: flex-start; cursor: pointer;">
                     <i class="fa-brands fa-instagram" style="color: #e1306c; font-size: 1.2rem;"></i>
                     <span>Instagram: @${instaHandle}</span>
-                </a>`;
+                </div>`;
         }
 
-        // WhatsApp
+        // WhatsApp — opens in WhatsApp app externally
         if (contact.whatsapp) {
             const waNumber = contact.whatsapp.replace(/[^0-9]/g, '');
             container.innerHTML += `
-                <a href="https://wa.me/${waNumber}" target="_blank" class="btn btn-outline" style="display: flex; align-items: center; gap: 12px; justify-content: flex-start; text-decoration: none;">
+                <div onclick="openExternalUrl('https://wa.me/${waNumber}')" class="btn btn-outline" style="display: flex; align-items: center; gap: 12px; justify-content: flex-start; cursor: pointer;">
                     <i class="fa-brands fa-whatsapp" style="color: #25d366; font-size: 1.2rem;"></i>
                     <span>WhatsApp</span>
-                </a>`;
+                </div>`;
         }
 
         // If no contact options configured
@@ -106,6 +106,12 @@ async function loadEarnView() {
     if (!state.user) return;
     const uid = state.user.uid;
 
+    // Load spin wheel
+    if (typeof loadSpinWheel === 'function') loadSpinWheel();
+
+    // Load VIP status
+    if (typeof loadVipStatus === 'function') loadVipStatus();
+
     // Load user's referral code
     const userSnap = await db.ref('users/' + uid + '/referralCode').once('value');
     const myCode = userSnap.val() || 'N/A';
@@ -116,7 +122,7 @@ async function loadEarnView() {
     const stats = statsSnap.val() || { totalReferrals: 0, totalEarnings: 0, pendingReferrals: 0 };
     document.getElementById('referral-count').textContent = stats.totalReferrals || 0;
     const pendingCount = stats.pendingReferrals || 0;
-    const earnedText = '₹' + (stats.totalEarnings || 0);
+    const earnedText = '🪙 ' + (stats.totalEarnings || 0);
     document.getElementById('referral-earnings').textContent = earnedText;
 
     // Load referral reward amount + required games from config
@@ -124,7 +130,7 @@ async function loadEarnView() {
     const config = configSnap.val() || {};
     const rewardAmount = config.rewardAmount || 5;
     const requiredGames = config.requiredGames || 3;
-    document.getElementById('referral-reward-amount').textContent = '₹' + rewardAmount;
+    document.getElementById('referral-reward-amount').textContent = '🪙 ' + rewardAmount;
 
     // Load my referrals list with PENDING/COMPLETED status
     const referralsSnap = await db.ref('referrals/' + uid).once('value');
@@ -147,8 +153,8 @@ async function loadEarnView() {
                 : '';
 
             const rewardText = isPending
-                ? `<span style="color: #ff9f43; font-weight: 600; font-size: 0.85rem;">₹${ref.rewardAmount || rewardAmount} pending</span>`
-                : `<span style="color: var(--success); font-weight: 600;">+₹${ref.rewardAmount || rewardAmount}</span>`;
+                ? `<span style="color: #ff9f43; font-weight: 600; font-size: 0.85rem;">🪙 ${ref.rewardAmount || rewardAmount} pending</span>`
+                : `<span style="color: var(--success); font-weight: 600;">+🪙 ${ref.rewardAmount || rewardAmount}</span>`;
 
             listEl.innerHTML += `
                 <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border);">
@@ -222,25 +228,34 @@ window.switchHomeMode = function (mode) {
     const slider = document.getElementById('toggle-slider');
     const esportsBtn = document.getElementById('toggle-esports');
     const ludoBtn = document.getElementById('toggle-ludo');
+    const tourneysBtn = document.getElementById('toggle-tournaments');
     const esportsContent = document.getElementById('home-esports-content');
     const ludoContent = document.getElementById('home-ludo-content');
+    const tourneysContent = document.getElementById('home-tournaments-content');
+
+    // Reset all
+    esportsBtn.style.color = 'var(--text-muted)';
+    ludoBtn.style.color = 'var(--text-muted)';
+    if (tourneysBtn) tourneysBtn.style.color = 'var(--text-muted)';
+    esportsContent.classList.add('hidden');
+    ludoContent.classList.add('hidden');
+    if (tourneysContent) tourneysContent.classList.add('hidden');
 
     if (mode === 'esports') {
         slider.style.transform = 'translateX(0)';
         esportsBtn.style.color = 'white';
-        ludoBtn.style.color = 'var(--text-muted)';
         esportsContent.classList.remove('hidden');
-        ludoContent.classList.add('hidden');
-        // Load eSports data
         loadEsportsGames();
-    } else {
+    } else if (mode === 'ludo') {
         slider.style.transform = 'translateX(100%)';
-        esportsBtn.style.color = 'var(--text-muted)';
         ludoBtn.style.color = 'white';
-        esportsContent.classList.add('hidden');
         ludoContent.classList.remove('hidden');
-        // Load Ludo data
         loadLudoHome();
+    } else if (mode === 'tournaments') {
+        slider.style.transform = 'translateX(200%)';
+        if (tourneysBtn) tourneysBtn.style.color = 'white';
+        if (tourneysContent) tourneysContent.classList.remove('hidden');
+        if (typeof loadUserTournaments === 'function') loadUserTournaments();
     }
 };
 
@@ -283,7 +298,7 @@ function loadLudoChallenges() {
                 card.innerHTML = `
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div>
-                            <div style="font-weight: 600;">₹${match.amount} Challenge</div>
+                            <div style="font-weight: 600;">🪙 ${match.amount} Challenge</div>
                             <div class="text-muted" style="font-size: 0.8rem;">by ${match.creatorName || 'Player'}</div>
                         </div>
                         <button class="btn btn-primary btn-sm" onclick="acceptChallenge('${match.id}')">Accept</button>
@@ -300,7 +315,7 @@ function loadLudoChallenges() {
                     <div class="game-card" style="border: 2px solid var(--primary);">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <div>
-                                <div style="font-weight: 600; color: var(--primary);">₹${myActive.amount} Challenge</div>
+                                <div style="font-weight: 600; color: var(--primary);">🪙 ${myActive.amount} Challenge</div>
                                 <div class="text-muted" style="font-size: 0.8rem;">Waiting for opponent...</div>
                             </div>
                             <button class="btn btn-danger btn-sm" onclick="cancelMyChallenge('${myActive.id}')">Cancel</button>
@@ -406,8 +421,8 @@ function loadMyGames() {
                 </div>
                 <div style="font-weight: 700; margin-bottom: 6px; font-size:1.05rem;">${match.title}</div>
                 <div style="display:flex; gap:16px; margin-bottom:10px; font-size:0.85rem;">
-                    <span><i class="fa-solid fa-coins" style="color:var(--warning);"></i> ₹${match.entryFee || 0}</span>
-                    <span><i class="fa-solid fa-trophy" style="color:var(--success);"></i> ₹${match.prizePool || 0}</span>
+                    <span><i class="fa-solid fa-coins" style="color:var(--warning);"></i> 🪙 ${match.entryFee || 0}</span>
+                    <span><i class="fa-solid fa-trophy" style="color:var(--success);"></i> 🪙 ${match.prizePool || 0}</span>
                 </div>
                 <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px;">
                     <i class="fa-regular fa-clock"></i> ${new Date(match.dateTime).toLocaleString()}
@@ -532,6 +547,9 @@ window.showAnnouncementHistory = async function () {
 
 // --- DATA LOADERS (Placeholders for logic) ---
 function loadHome() {
+    // Load Smart Notifications
+    if (typeof loadSmartNotifications === 'function') loadSmartNotifications();
+
     // Load Announcement Bar
     db.ref('announcement_bar').on('value', snap => {
         const announcement = snap.val();
@@ -592,7 +610,8 @@ function loadHome() {
                     div.style.cursor = 'pointer';
                     div.onclick = (e) => {
                         // Don't open link if user was swiping
-                        if (!sliderSwiped) window.open(linkUrl, '_blank');
+                        // Use openExternalUrl to open in external app/browser (not inside WebView)
+                        if (!sliderSwiped) openExternalUrl(linkUrl);
                     };
                 }
                 sliderDiv.appendChild(div);
@@ -734,6 +753,7 @@ function navigateToGameMatches(gameId, gameName, gameIcon) {
     document.getElementById('home-slider').style.display = 'none';
     document.getElementById('mode-toggle').style.display = 'none';
     document.getElementById('announcement-bar').style.display = 'none';
+    document.getElementById('smart-notifications').style.display = 'none';
 
     loadMatchesList();
 }
@@ -761,6 +781,9 @@ function clearGameFilter() {
     if (announcementBar.querySelector('#announcement-text').textContent.trim()) {
         announcementBar.style.display = 'flex';
     }
+
+    // Refresh smart notifications
+    if (typeof loadSmartNotifications === 'function') loadSmartNotifications();
 
     // Clear matches list
     document.getElementById('matches-list').innerHTML = '';

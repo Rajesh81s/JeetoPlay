@@ -4,14 +4,14 @@
  *          webhookApi, processWithdrawal, processDeposit, confirmDeposit, creditZapUPIDeposit
  */
 
-const { functions, admin, db, assertAuth, sendPush } = require('./helpers');
+const { functions, admin, db, assertAuth, sendPush, checkRateLimit, assertNotBanned, onCall, onRequest, HttpsError, logEvent } = require('./helpers');
 const https = require('https');
 const http = require('http');
 const querystring = require('querystring');
 
 // ─── Payment API (HTTP endpoint for hosting rewrite) ────────
 // Proxies payment creation requests to ZapUPI or custom gateways
-exports.createPaymentApi = functions.https.onRequest(async (req, res) => {
+exports.createPaymentApi = onRequest({ cors: true }, async (req, res) => {
     // CORS
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -156,7 +156,7 @@ exports.createPaymentApi = functions.https.onRequest(async (req, res) => {
 });
 
 // ─── ZapUPI Auto-Check API (polls payment status) ────────
-exports.zapupiAutoCheckApi = functions.https.onRequest(async (req, res) => {
+exports.zapupiAutoCheckApi = onRequest({ cors: true }, async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Content-Type');
@@ -209,7 +209,7 @@ exports.zapupiAutoCheckApi = functions.https.onRequest(async (req, res) => {
 });
 
 // ─── Check Payment Status API (ZapUPI order-status) ────────
-exports.checkPaymentStatusApi = functions.https.onRequest(async (req, res) => {
+exports.checkPaymentStatusApi = onRequest({ cors: true }, async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Content-Type');
@@ -273,7 +273,7 @@ exports.checkPaymentStatusApi = functions.https.onRequest(async (req, res) => {
 });
 
 // ─── Webhook API (payment gateway callbacks) ────────
-exports.webhookApi = functions.https.onRequest(async (req, res) => {
+exports.webhookApi = onRequest({ cors: true }, async (req, res) => {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Content-Type');
@@ -287,6 +287,7 @@ exports.webhookApi = functions.https.onRequest(async (req, res) => {
     const txnId = data.order_id || data.transaction_id || data.orderId;
     const rawStatus = data.status || data.txn_status || data.transaction_status;
 
+    logEvent('webhookApi', 'info', 'Webhook received', { txnId, rawStatus });
     functions.logger.info('webhookApi called:', { txnId, rawStatus, body: JSON.stringify(data).substring(0, 500) });
 
     if (!txnId) {
@@ -395,10 +396,28 @@ exports.webhookApi = functions.https.onRequest(async (req, res) => {
 
         functions.logger.info('webhookApi: claimed txn, crediting balance', { txnId, userId, amount: parsedAmount });
 
+        // ─── VIP Deposit Bonus ───
+        let vipBonus = 0;
+        try {
+            const [vipConfigSnap, vipUserSnap] = await Promise.all([
+                db.ref('platform_config/vip').once('value'),
+                db.ref(`users/${userId}/vip`).once('value')
+            ]);
+            const vipConfig = vipConfigSnap.val() || {};
+            const vipUser = vipUserSnap.val();
+            if (vipConfig.enabled !== false && vipUser && vipUser.active && vipUser.expiresAt > Date.now()) {
+                const bonusPct = vipConfig.bonusPercent || 5;
+                vipBonus = Math.max(1, Math.round(parsedAmount * bonusPct / 100));
+            }
+        } catch (e) {
+            functions.logger.warn('webhookApi: VIP check failed (non-critical)', e.message);
+        }
+
         // We now own this txn — safe to credit balance
+        const totalCredit = parsedAmount + vipBonus;
         const balanceTxn = await db.ref(`users/${userId}`).transaction(user => {
-            if (!user) user = {}; // Fix: don't abort if user node is sparse
-            user.depositBalance = (user.depositBalance || 0) + parsedAmount;
+            if (!user) user = {};
+            user.depositBalance = (user.depositBalance || 0) + totalCredit;
             user.walletBalance = (user.depositBalance || 0) + (user.winningBalance || 0);
             return user;
         });
@@ -411,12 +430,30 @@ exports.webhookApi = functions.https.onRequest(async (req, res) => {
         }
 
         const userAfter = balanceTxn.snapshot.val();
-        functions.logger.info('webhookApi: balance credited', { txnId, userId, newDeposit: userAfter.depositBalance, newWallet: userAfter.walletBalance });
+        functions.logger.info('webhookApi: balance credited', { txnId, userId, newDeposit: userAfter.depositBalance, newWallet: userAfter.walletBalance, vipBonus });
+
+        // Log VIP bonus as separate wallet transaction
+        if (vipBonus > 0) {
+            const bonusTxnKey = db.ref('wallet_transactions').push().key;
+            await db.ref(`wallet_transactions/${bonusTxnKey}`).set({
+                userId,
+                amount: vipBonus,
+                type: 'CREDIT',
+                isCredit: true,
+                reason: `VIP deposit bonus (${parsedAmount} × ${vipBonus > 0 ? Math.round(vipBonus / parsedAmount * 100) : 0}%)`,
+                description: `VIP bonus on 🪙 ${parsedAmount} deposit`,
+                vipBonus: vipBonus,
+                linkedTxnId: txnId,
+                walletType: 'DEPOSIT',
+                status: 'SUCCESS',
+                timestamp: admin.database.ServerValue.TIMESTAMP
+            });
+        }
 
         // Update legacy wallet path
         await db.ref('wallets/' + userId).transaction(current => {
             if (!current) current = { balance: 0 };
-            current.balance = (current.balance || 0) + parsedAmount;
+            current.balance = (current.balance || 0) + totalCredit;
             current.last_deposit = Date.now();
             return current;
         });
@@ -429,18 +466,89 @@ exports.webhookApi = functions.https.onRequest(async (req, res) => {
 });
 
 // ─── Process Withdrawal ─────────────────────────────────────
-exports.processWithdrawal = functions.https.onCall(async (data, context) => {
-    const uid = assertAuth(context);
-    const { amount, upiId } = data;
+exports.processWithdrawal = onCall(async (request) => {
+    const uid = assertAuth(request);
+    const { amount, upiId } = request.data;
 
-    if (!amount || amount <= 0) throw new functions.https.HttpsError('invalid-argument', 'Invalid amount');
-    if (!upiId || !upiId.includes('@')) throw new functions.https.HttpsError('invalid-argument', 'Invalid UPI ID');
+    // ── Rate limit: max 3 withdrawal attempts per hour ──
+    await checkRateLimit(uid, 'withdrawal', 3, 60 * 60 * 1000);
 
-    // Get min withdrawal config
-    const configSnap = await db.ref('platform_config/payments/min_withdrawal').once('value');
-    const minWithdrawal = parseInt(configSnap.val()) || 10;
+    // ── Server-side ban enforcement ──
+    const bannedCheckUser = await assertNotBanned(uid);
+
+    if (!amount || amount <= 0) throw new HttpsError('invalid-argument', 'Invalid amount');
+    if (!upiId || !upiId.includes('@')) throw new HttpsError('invalid-argument', 'Invalid UPI ID');
+    logEvent('processWithdrawal', 'info', 'Withdrawal requested', { uid, amount, upiId });
+
+    // ── Fetch all withdrawal configs in parallel (user data already from assertNotBanned) ──
+    const [minSnap, maxSnap, dailyLimitSnap, dailyAmountSnap, minAgeSnap] = await Promise.all([
+        db.ref('platform_config/payments/min_withdrawal').once('value'),
+        db.ref('platform_config/payments/max_withdrawal').once('value'),
+        db.ref('platform_config/payments/daily_withdrawal_limit').once('value'),
+        db.ref('platform_config/payments/daily_withdrawal_amount').once('value'),
+        db.ref('platform_config/payments/min_account_age_hours').once('value')
+    ]);
+
+    const minWithdrawal = parseInt(minSnap.val()) || 10;
+    const maxWithdrawal = parseInt(maxSnap.val()) || 25000;
+    const dailyLimit = parseInt(dailyLimitSnap.val()) || 3;
+    const dailyAmountCap = parseInt(dailyAmountSnap.val()) || 50000;
+    const minAccountAgeHours = parseInt(minAgeSnap.val()) || 24;
+    const userData = bannedCheckUser;
+
+
+    // ── Check 1: Min amount ──
     if (amount < minWithdrawal) {
-        throw new functions.https.HttpsError('invalid-argument', `Minimum withdrawal is ₹${minWithdrawal}`);
+        throw new HttpsError('invalid-argument', `Minimum withdrawal is 🪙 ${minWithdrawal}`);
+    }
+
+    // ── Check 2: Max single withdrawal ──
+    if (amount > maxWithdrawal) {
+        throw new HttpsError('invalid-argument', `Maximum single withdrawal is 🪙 ${maxWithdrawal}`);
+    }
+
+    // ── Check 3: Account age requirement ──
+    const accountCreatedAt = userData.createdAt || 0;
+    const accountAgeMs = Date.now() - accountCreatedAt;
+    const minAgeMs = minAccountAgeHours * 60 * 60 * 1000;
+    if (accountCreatedAt > 0 && accountAgeMs < minAgeMs) {
+        const hoursLeft = Math.ceil((minAgeMs - accountAgeMs) / (60 * 60 * 1000));
+        throw new HttpsError('failed-precondition',
+            `Account must be at least ${minAccountAgeHours} hours old to withdraw. Try again in ${hoursLeft} hour${hoursLeft > 1 ? 's' : ''}.`);
+    }
+
+    // ── Check 4: Daily withdrawal count + total ──
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayMs = todayStart.getTime();
+
+    const todayWithdrawals = await db.ref('withdrawals')
+        .orderByChild('userId')
+        .equalTo(uid)
+        .once('value');
+
+    let dailyCount = 0;
+    let dailyTotal = 0;
+    if (todayWithdrawals.exists()) {
+        todayWithdrawals.forEach(child => {
+            const w = child.val();
+            // Count only today's non-rejected withdrawals
+            if (w.createdAt >= todayMs && w.status !== 'REJECTED') {
+                dailyCount++;
+                dailyTotal += (w.amount || 0);
+            }
+        });
+    }
+
+    if (dailyCount >= dailyLimit) {
+        throw new HttpsError('resource-exhausted',
+            `Daily withdrawal limit reached (${dailyLimit} per day). Try again tomorrow.`);
+    }
+
+    if (dailyTotal + amount > dailyAmountCap) {
+        const remaining = dailyAmountCap - dailyTotal;
+        throw new HttpsError('resource-exhausted',
+            `Daily withdrawal amount limit is 🪙 ${dailyAmountCap}. You've already withdrawn 🪙 ${dailyTotal} today.${remaining > 0 ? ` You can withdraw up to 🪙 ${remaining} more.` : ''}`);
     }
 
     // Full-user-object transaction (proven pattern from deductBalance)
@@ -472,26 +580,86 @@ exports.processWithdrawal = functions.https.onCall(async (data, context) => {
     if (!txn.committed) {
         const balSnap = await db.ref(`users/${uid}/winningBalance`).once('value');
         const actualBal = balSnap.val() || 0;
-        throw new functions.https.HttpsError('failed-precondition',
-            `Insufficient winning balance. You have ₹${actualBal}, requested ₹${amount}`);
+        throw new HttpsError('failed-precondition',
+            `Insufficient winning balance. You have 🪙 ${actualBal}, requested 🪙 ${amount}`);
     }
 
     const userAfter = txn.snapshot.val();
     const balAfter = userAfter.winningBalance || 0;
     const userName = userAfter.fullName || userAfter.username || 'User';
 
+    // ── Fraud Detection Flags ──
+    const fraudFlags = new Set();
+
+    // Flag 1: Rapid cashout — any deposit within 1 hour
+    const recentDeposits = await db.ref('deposits')
+        .orderByChild('userId')
+        .equalTo(uid)
+        .once('value');
+    if (recentDeposits.exists()) {
+        const oneHourAgo = Date.now() - (60 * 60 * 1000);
+        recentDeposits.forEach(child => {
+            const dep = child.val();
+            if (dep.status === 'SUCCESS' && dep.createdAt && dep.createdAt > oneHourAgo) {
+                fraudFlags.add('RAPID_CASHOUT');
+            }
+        });
+    }
+
+    // Flag 2: New account (under 48 hours old)
+    if (accountCreatedAt > 0 && (Date.now() - accountCreatedAt) < 48 * 60 * 60 * 1000) {
+        fraudFlags.add('NEW_ACCOUNT');
+    }
+
+    // Flag 3: High velocity — 3+ withdrawals today to different UPIs
+    if (dailyCount >= 2) {
+        const upiSet = new Set();
+        if (todayWithdrawals.exists()) {
+            todayWithdrawals.forEach(child => {
+                const w = child.val();
+                if (w.createdAt >= todayMs && w.status !== 'REJECTED' && w.upiId) {
+                    upiSet.add(w.upiId);
+                }
+            });
+        }
+        upiSet.add(upiId); // Add current withdrawal UPI
+        if (upiSet.size >= 3) {
+            fraudFlags.add('MULTI_UPI');
+        }
+    }
+
+    // Flag 4: Large amount (over 50% of max withdrawal)
+    if (amount > maxWithdrawal * 0.5) {
+        fraudFlags.add('LARGE_AMOUNT');
+    }
+
+    // Determine status: FLAGGED if any fraud flags, otherwise PENDING
+    const flagsArray = [...fraudFlags]; // Convert Set to Array for DB and logging
+    const withdrawalStatus = flagsArray.length > 0 ? 'FLAGGED' : 'PENDING';
+
+    if (flagsArray.length > 0) {
+        functions.logger.warn(`[FRAUD] Withdrawal flagged for ${uid}: ${flagsArray.join(', ')} — amount: ₹${amount}, upi: ${upiId}`);
+    }
+
     // Create withdrawal record
     const withdrawKey = db.ref('withdrawals').push().key;
-    await db.ref('withdrawals/' + withdrawKey).set({
+    const withdrawalRecord = {
         userId: uid,
         userName: userName,
         amount: amount,
         upiId: upiId,
         winningBalanceBefore: balAfter + amount,
         winningBalanceAfter: balAfter,
-        status: 'PENDING',
+        status: withdrawalStatus,
         createdAt: admin.database.ServerValue.TIMESTAMP
-    });
+    };
+
+    if (flagsArray.length > 0) {
+        withdrawalRecord.fraudFlags = flagsArray;
+        withdrawalRecord.flaggedAt = admin.database.ServerValue.TIMESTAMP;
+    }
+
+    await db.ref('withdrawals/' + withdrawKey).set(withdrawalRecord);
 
     // Log wallet transaction
     const txnKey = db.ref('wallet_transactions').push().key;
@@ -514,15 +682,25 @@ exports.processWithdrawal = functions.https.onCall(async (data, context) => {
 });
 
 // ─── Process Deposit (simulated) ────────────────────────────
-exports.processDeposit = functions.https.onCall(async (data, context) => {
-    const uid = assertAuth(context);
-    const { amount, depositId } = data;
+exports.processDeposit = onCall(async (request) => {
+    const uid = assertAuth(request);
+    const { amount, depositId } = request.data;
 
-    if (!amount || amount < 1) throw new functions.https.HttpsError('invalid-argument', 'Invalid amount');
+    if (!amount || amount < 1) throw new HttpsError('invalid-argument', 'Invalid amount');
 
-    // Credit deposit balance (server-side, bypasses rules)
-    const txn = await db.ref(`users/${uid}/depositBalance`).transaction(b => (b || 0) + amount);
-    const newBal = txn.snapshot.val() || 0;
+    // Credit deposit balance + sync walletBalance atomically
+    const txn = await db.ref(`users/${uid}`).transaction(user => {
+        if (!user) user = {};
+        user.depositBalance = (user.depositBalance || 0) + amount;
+        user.walletBalance = (user.depositBalance || 0) + (user.winningBalance || 0);
+        return user;
+    });
+
+    if (!txn.committed) {
+        throw new HttpsError('internal', 'Failed to credit balance');
+    }
+    const userAfter = txn.snapshot.val();
+    const newBal = userAfter.depositBalance || 0;
 
     // Update deposit record if provided
     if (depositId) {
@@ -537,31 +715,37 @@ exports.processDeposit = functions.https.onCall(async (data, context) => {
 });
 
 // ─── Confirm Deposit (universal — works for ZapUPI, custom, all gateways) ──
-const _confirmDepositHandler = async (data, context) => {
-    const uid = assertAuth(context);
-    const { txnId, utr } = data;
+const _confirmDepositHandler = async (request) => {
+    const uid = assertAuth(request);
+    const { txnId, utr } = request.data;
 
-    functions.logger.info('confirmDeposit called:', { uid, txnId, utr, gateway_type: data.gateway_type });
+    // ── Rate limit: max 5 deposit confirmations per 10 minutes ──
+    await checkRateLimit(uid, 'confirm_deposit', 5, 10 * 60 * 1000);
+
+    // ── Server-side ban enforcement ──
+    await assertNotBanned(uid);
+
+    functions.logger.info('confirmDeposit called:', { uid, txnId, utr, gateway_type: request.data.gateway_type });
 
     if (!txnId) {
-        throw new functions.https.HttpsError('invalid-argument', 'txnId is required');
+        throw new HttpsError('invalid-argument', 'txnId is required');
     }
 
     // Verify ownership and get stored transaction data
     const existingTxn = await db.ref('wallet_transactions/' + txnId).once('value');
     if (!existingTxn.exists()) {
-        throw new functions.https.HttpsError('not-found', 'Transaction not found');
+        throw new HttpsError('not-found', 'Transaction not found');
     }
     const existingTxnData = existingTxn.val();
     if (existingTxnData.userId !== uid) {
         functions.logger.warn('confirmDeposit: ownership mismatch', { txnId, txnUserId: existingTxnData.userId, callerUid: uid });
-        throw new functions.https.HttpsError('permission-denied', 'Transaction does not belong to you');
+        throw new HttpsError('permission-denied', 'Transaction does not belong to you');
     }
 
     // ⚠️ SECURITY: Always use the amount from our stored transaction, NEVER from the client
     const parsedAmount = parseInt(existingTxnData.amount);
     if (!parsedAmount || parsedAmount <= 0) {
-        throw new functions.https.HttpsError('invalid-argument', 'Invalid transaction amount');
+        throw new HttpsError('invalid-argument', 'Invalid transaction amount');
     }
 
     // ⚠️ SECURITY: Cross-verify with ZapUPI before crediting (prevents fake success claims)
@@ -602,14 +786,14 @@ const _confirmDepositHandler = async (data, context) => {
                 const zapStatus = String(verifyResult?.data?.status || '').toLowerCase();
                 if (zapStatus !== 'success') {
                     functions.logger.warn('confirmDeposit: ZapUPI says payment NOT confirmed', { txnId, zapStatus, verifyResult });
-                    throw new functions.https.HttpsError('failed-precondition', 'Payment not confirmed by payment gateway. Status: ' + zapStatus);
+                    throw new HttpsError('failed-precondition', 'Payment not confirmed by payment gateway. Status: ' + zapStatus);
                 }
             }
         } catch (verifyErr) {
-            if (verifyErr instanceof functions.https.HttpsError) throw verifyErr;
+            if (verifyErr instanceof HttpsError) throw verifyErr;
             // Network/timeout errors — do NOT proceed, reject the credit
             functions.logger.error('confirmDeposit: ZapUPI verification failed', { txnId, error: verifyErr.message });
-            throw new functions.https.HttpsError('unavailable', 'Unable to verify payment with gateway. Please try again.');
+            throw new HttpsError('unavailable', 'Unable to verify payment with gateway. Please try again.');
         }
     }
 
@@ -620,7 +804,7 @@ const _confirmDepositHandler = async (data, context) => {
         txn.status = 'SUCCESS';
         txn.utr = utr || 'AUTO_VERIFIED';
         txn.verified_at = Date.now();
-        txn.verified_by = data.gateway_type ? `${data.gateway_type}_AUTO` : 'AUTO';
+        txn.verified_by = (request.data.gateway_type || existingTxnData.gateway_type) ? `${request.data.gateway_type || existingTxnData.gateway_type}_AUTO` : 'AUTO';
         return txn;
     });
 
@@ -631,13 +815,30 @@ const _confirmDepositHandler = async (data, context) => {
 
     functions.logger.info('confirmDeposit: claimed txn, crediting balance', { txnId, uid, amount: parsedAmount });
 
+    // ─── VIP Deposit Bonus ───
+    let vipBonus = 0;
+    try {
+        const [vipConfigSnap, vipUserSnap] = await Promise.all([
+            db.ref('platform_config/vip').once('value'),
+            db.ref(`users/${uid}/vip`).once('value')
+        ]);
+        const vipConfig = vipConfigSnap.val() || {};
+        const vipUser = vipUserSnap.val();
+        if (vipConfig.enabled !== false && vipUser && vipUser.active && vipUser.expiresAt > Date.now()) {
+            const bonusPct = vipConfig.bonusPercent || 5;
+            vipBonus = Math.max(1, Math.round(parsedAmount * bonusPct / 100));
+        }
+    } catch (e) {
+        functions.logger.warn('confirmDeposit: VIP check failed (non-critical)', e.message);
+    }
+
     // We now own this txn — safe to credit balance
+    const totalCredit = parsedAmount + vipBonus;
     const balanceTxnResult = await db.ref(`users/${uid}`).transaction(user => {
         if (!user) {
-            // User node doesn't exist yet — create it with just the balance fields
             user = {};
         }
-        user.depositBalance = (user.depositBalance || 0) + parsedAmount;
+        user.depositBalance = (user.depositBalance || 0) + totalCredit;
         user.walletBalance = (user.depositBalance || 0) + (user.winningBalance || 0);
         return user;
     });
@@ -646,22 +847,41 @@ const _confirmDepositHandler = async (data, context) => {
         functions.logger.error('confirmDeposit: balance update FAILED', { txnId, uid, committed: balanceTxnResult.committed });
         // Rollback txn status
         await db.ref('wallet_transactions/' + txnId).update({ status: 'PENDING', utr: null, verified_at: null, verified_by: null });
-        throw new functions.https.HttpsError('internal', 'Failed to credit balance');
+        throw new HttpsError('internal', 'Failed to credit balance');
     }
 
     const userAfterDeposit = balanceTxnResult.snapshot.val();
-    functions.logger.info('confirmDeposit: balance credited successfully', { txnId, uid, newDepositBalance: userAfterDeposit.depositBalance, newWalletBalance: userAfterDeposit.walletBalance });
+    functions.logger.info('confirmDeposit: balance credited successfully', { txnId, uid, newDepositBalance: userAfterDeposit.depositBalance, newWalletBalance: userAfterDeposit.walletBalance, vipBonus });
+
+    // Log VIP bonus as separate wallet transaction
+    if (vipBonus > 0) {
+        const bonusTxnKey = db.ref('wallet_transactions').push().key;
+        await db.ref(`wallet_transactions/${bonusTxnKey}`).set({
+            userId: uid,
+            amount: vipBonus,
+            type: 'CREDIT',
+            isCredit: true,
+            reason: `VIP deposit bonus (${parsedAmount} × ${vipBonus > 0 ? Math.round(vipBonus / parsedAmount * 100) : 0}%)`,
+            description: `VIP bonus on 🪙 ${parsedAmount} deposit`,
+            vipBonus: vipBonus,
+            linkedTxnId: txnId,
+            walletType: 'DEPOSIT',
+            status: 'SUCCESS',
+            timestamp: admin.database.ServerValue.TIMESTAMP
+        });
+    }
 
     // Update legacy wallet
     await db.ref('wallets/' + uid).transaction(current => {
         if (!current) current = { balance: 0 };
-        current.balance = (current.balance || 0) + parsedAmount;
+        current.balance = (current.balance || 0) + totalCredit;
         current.last_deposit = Date.now();
         return current;
     });
 
     // Push notification: Deposit confirmed
-    sendPush(uid, `💰 ₹${parsedAmount} Added to Wallet`, `₹${parsedAmount} deposited successfully! Your new balance is ready — explore Ludo challenges and eSports tournaments now.`, { type: 'DEPOSIT_SUCCESS', amount: String(parsedAmount) }).catch(() => { });
+    const bonusText = vipBonus > 0 ? ` (+ 🪙 ${vipBonus} VIP bonus!)` : '';
+    sendPush(uid, `💰 🪙 ${parsedAmount} Added to Wallet`, `🪙 ${parsedAmount} deposited successfully${bonusText}! Your new balance is ready — explore Ludo challenges and eSports tournaments now.`, { type: 'DEPOSIT_SUCCESS', amount: String(parsedAmount) }).catch(() => { });
 
     return {
         success: true,
@@ -670,5 +890,5 @@ const _confirmDepositHandler = async (data, context) => {
     };
 };
 
-exports.confirmDeposit = functions.https.onCall(_confirmDepositHandler);
-exports.creditZapUPIDeposit = functions.https.onCall(_confirmDepositHandler); // backward compat
+exports.confirmDeposit = onCall(_confirmDepositHandler);
+exports.creditZapUPIDeposit = onCall(_confirmDepositHandler); // backward compat

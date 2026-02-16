@@ -1,11 +1,13 @@
 /**
- * triggers.js — Database trigger Cloud Functions
+ * triggers.js — Database trigger Cloud Functions (v1)
+ * NOTE: These MUST remain v1 because v2 RTDB triggers require
+ * the database to be in the same region as the function.
  * Exports: onLudoMatchUpdate, onWithdrawalUpdate, onFcmTokenUpdate, onNewUser
  */
 
 const {
     functions, admin, db,
-    sendPush
+    sendPush, getLudoCommission, logEvent
 } = require('./helpers');
 
 // ─── Database Trigger: Ludo Match Status Notifications ──────
@@ -35,7 +37,7 @@ exports.onLudoMatchUpdate = functions.database
                 if (creatorUid) {
                     functions.logger.info(`[onLudoMatchUpdate] Sending PAIRED push to creator ${creatorUid}`);
                     await sendPush(creatorUid, `🎮 Challenge Accepted! #${shortId}`,
-                        `${acceptorName} accepted your ₹${after.amount} Ludo challenge! Create a room in Ludo King and share the room code to start playing.`,
+                        `${acceptorName} accepted your 🪙 ${after.amount} Ludo challenge! Create a room in Ludo King and share the room code to start playing.`,
                         { type: 'LUDO_PAIRED', matchId });
                 }
                 break;
@@ -46,23 +48,27 @@ exports.onLudoMatchUpdate = functions.database
                 if (acceptorUid && before.status === 'PAIRED') {
                     functions.logger.info(`[onLudoMatchUpdate] Sending ROOM_SHARED push to acceptor ${acceptorUid}`);
                     await sendPush(acceptorUid, `🔑 Room Code: ${after.roomCode || 'N/A'} — #${shortId}`,
-                        `Room code for your ₹${after.amount} Ludo match vs ${creatorName} is: ${after.roomCode}. Open Ludo King → Join Room → Enter code → Play!`,
+                        `Room code for your 🪙 ${after.amount} Ludo match vs ${creatorName} is: ${after.roomCode}. Open Ludo King → Join Room → Enter code → Play!`,
                         { type: 'LUDO_ROOM_SHARED', matchId, roomCode: after.roomCode || '' });
                 } else {
                     functions.logger.warn(`[onLudoMatchUpdate] ROOM_SHARED: Not sending push. acceptorUid=${acceptorUid}, before.status=${before.status}`);
                 }
                 break;
 
-            case 'IN_PROGRESS':
+            case 'IN_PROGRESS': {
                 // Both players notified
                 functions.logger.info(`[onLudoMatchUpdate] Sending IN_PROGRESS push to both players`);
-                if (creatorUid) await sendPush(creatorUid, `🎲 Match Live! #${shortId} — ₹${after.amount}`,
-                    `Your ₹${after.amount} Ludo match vs ${acceptorName} is LIVE! Room: ${after.roomCode || 'N/A'}. Play your best — winner gets ₹${(after.amount * 2) - Math.ceil(after.amount * 2 * 0.1)}!`,
+                const commissionPercent = await getLudoCommission();
+                const pool = after.amount * 2;
+                const winAmount = pool - Math.ceil(pool * commissionPercent / 100);
+                if (creatorUid) await sendPush(creatorUid, `🎲 Match Live! #${shortId} — 🪙 ${after.amount}`,
+                    `Your 🪙 ${after.amount} Ludo match vs ${acceptorName} is LIVE! Room: ${after.roomCode || 'N/A'}. Play your best — winner gets 🪙 ${winAmount}!`,
                     { type: 'LUDO_IN_PROGRESS', matchId, roomCode: after.roomCode || '' });
-                if (acceptorUid) await sendPush(acceptorUid, `🎲 Match Live! #${shortId} — ₹${after.amount}`,
-                    `Your ₹${after.amount} Ludo match vs ${creatorName} is LIVE! Room: ${after.roomCode || 'N/A'}. Play your best — winner gets ₹${(after.amount * 2) - Math.ceil(after.amount * 2 * 0.1)}!`,
+                if (acceptorUid) await sendPush(acceptorUid, `🎲 Match Live! #${shortId} — 🪙 ${after.amount}`,
+                    `Your 🪙 ${after.amount} Ludo match vs ${creatorName} is LIVE! Room: ${after.roomCode || 'N/A'}. Play your best — winner gets 🪙 ${winAmount}!`,
                     { type: 'LUDO_IN_PROGRESS', matchId, roomCode: after.roomCode || '' });
                 break;
+            }
 
             default:
                 functions.logger.info(`[onLudoMatchUpdate] No notification for status: ${after.status}`);
@@ -104,21 +110,23 @@ exports.onWithdrawalUpdate = functions.database
 
         switch (after.status) {
             case 'APPROVED':
-                await sendPush(userId, `✅ Withdrawal Approved — ₹${after.amount}`, `Great news! Your ₹${after.amount} withdrawal has been approved and is being processed. You'll receive the payment shortly.`, { type: 'WITHDRAWAL_APPROVED' });
+                await sendPush(userId, `✅ Withdrawal Approved — 🪙 ${after.amount}`, `Great news! Your 🪙 ${after.amount} withdrawal has been approved and is being processed. You'll receive the payment shortly.`, { type: 'WITHDRAWAL_APPROVED' });
                 break;
 
             case 'COMPLETED':
-                await sendPush(userId, `💸 ₹${after.amount} Sent to Your Account`, `₹${after.amount} has been successfully transferred to your UPI/bank account. It may take a few minutes to reflect.`, { type: 'WITHDRAWAL_COMPLETED' });
+                await sendPush(userId, `💸 🪙 ${after.amount} Sent to Your Account`, `🪙 ${after.amount} has been successfully transferred to your UPI/bank account. It may take a few minutes to reflect.`, { type: 'WITHDRAWAL_COMPLETED' });
                 break;
 
             case 'REJECTED': {
-                // Atomic refund to winning balance (server-side, secure)
-                const refundTxn = await db.ref(`users/${userId}/winningBalance`).transaction(bal => {
-                    return (bal || 0) + after.amount;
-                });
-                const newBal = refundTxn.snapshot.val() || 0;
+                // NOTE: Balance refund is handled by adminRejectWithdrawal in admin.js.
+                // This trigger ONLY handles logging and notifications — NO balance modification
+                // to avoid a double-refund vulnerability.
 
-                // Log refund as a wallet transaction
+                // Read current balance for logging purposes (do NOT modify it)
+                const currentBalSnap = await db.ref(`users/${userId}/winningBalance`).once('value');
+                const currentBal = currentBalSnap.val() || 0;
+
+                // Log refund as a wallet transaction (for user's transaction history)
                 const refundKey = db.ref('wallet_transactions').push().key;
                 await db.ref('wallet_transactions/' + refundKey).set({
                     userId: userId,
@@ -131,8 +139,7 @@ exports.onWithdrawalUpdate = functions.database
                     walletType: 'winning',
                     withdrawalId: withdrawalId,
                     adminNote: after.adminNote || '',
-                    balanceBefore: { winning: newBal - after.amount },
-                    balanceAfter: { winning: newBal },
+                    balanceAfter: { winning: currentBal },
                     status: 'SUCCESS',
                     timestamp: admin.database.ServerValue.TIMESTAMP
                 });
@@ -140,10 +147,10 @@ exports.onWithdrawalUpdate = functions.database
                 // Mark withdrawal as refunded
                 await db.ref('withdrawals/' + withdrawalId).update({
                     refundedAt: admin.database.ServerValue.TIMESTAMP,
-                    winningBalanceAfterRefund: newBal
+                    winningBalanceAfterRefund: currentBal
                 });
 
-                await sendPush(userId, `❌ Withdrawal Rejected — ₹${after.amount} Refunded`, `Your ₹${after.amount} withdrawal was rejected${after.adminNote ? ': ' + after.adminNote : ''}. The amount has been refunded to your winning balance.`, { type: 'WITHDRAWAL_REJECTED' });
+                await sendPush(userId, `❌ Withdrawal Rejected — 🪙 ${after.amount} Refunded`, `Your 🪙 ${after.amount} withdrawal was rejected${after.adminNote ? ': ' + after.adminNote : ''}. The amount has been refunded to your winning balance.`, { type: 'WITHDRAWAL_REJECTED' });
                 break;
             }
         }
@@ -177,7 +184,7 @@ exports.onFcmTokenUpdate = functions.database
             // If token is invalid, remove it
             if (err.code === 'messaging/registration-token-not-registered' ||
                 err.code === 'messaging/invalid-registration-token') {
-                await change.after.ref.remove();
+                await db.ref(`users/${uid}/fcmToken`).remove();
                 functions.logger.warn(`[onFcmTokenUpdate] Removed invalid token for ${uid}`);
             }
         }

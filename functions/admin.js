@@ -1,21 +1,23 @@
 /**
  * admin.js — Admin-only Cloud Functions
  * Exports: adminLogin, adminWalletUpdate, adminRejectWithdrawal, adminCancelLudoMatch,
- *          adminResolveLudoDispute, lookupEmailByMobile
+ *          adminResolveLudoDispute, lookupEmailByMobile, adminBanUser, adminUnbanUser
  */
 
 const {
     functions, admin, db,
-    assertAuth, assertAdmin, sendPush, refundPlayer, getLudoCommission
+    onCall, HttpsError,
+    assertAuth, assertAdmin, sendPush, refundPlayer, getLudoCommission,
+    logEvent
 } = require('./helpers');
 
 // ─── Admin Login (Custom Token Auth) ────────────────────────
 
-exports.adminLogin = functions.https.onCall(async (data) => {
-    const { username, passwordHash } = data;
+exports.adminLogin = onCall(async (request) => {
+    const { username, passwordHash } = request.data;
 
     if (!username || !passwordHash) {
-        throw new functions.https.HttpsError('invalid-argument', 'Username and password required');
+        throw new HttpsError('invalid-argument', 'Username and password required');
     }
 
     let foundUid = null;
@@ -52,7 +54,7 @@ exports.adminLogin = functions.https.onCall(async (data) => {
     }
 
     if (!foundUid) {
-        throw new functions.https.HttpsError('not-found', 'Invalid credentials');
+        throw new HttpsError('not-found', 'Invalid credentials');
     }
 
     // Fetch permissions for moderators
@@ -84,34 +86,38 @@ exports.adminLogin = functions.https.onCall(async (data) => {
 
 // ─── Admin Wallet Credit / Debit ────────────────────────────
 
-exports.adminWalletUpdate = functions.https.onCall(async (data, context) => {
-    const adminUid = await assertAdmin(context);
-    const { targetUid, amount, action, reason } = data;
+exports.adminWalletUpdate = onCall(async (request) => {
+    const adminUid = await assertAdmin(request);
+    const { targetUid, amount, action, reason } = request.data;
 
     if (!targetUid || !amount || amount <= 0) {
-        throw new functions.https.HttpsError('invalid-argument', 'targetUid and positive amount required');
+        throw new HttpsError('invalid-argument', 'targetUid and positive amount required');
     }
     if (!['CREDIT', 'DEBIT'].includes(action)) {
-        throw new functions.https.HttpsError('invalid-argument', 'action must be CREDIT or DEBIT');
+        throw new HttpsError('invalid-argument', 'action must be CREDIT or DEBIT');
     }
 
     // Get user info
     const userSnap = await db.ref('users/' + targetUid).once('value');
     const pUser = userSnap.val();
-    if (!pUser) throw new functions.https.HttpsError('not-found', 'User not found');
+    if (!pUser) throw new HttpsError('not-found', 'User not found');
 
-    // Atomic balance update
-    const txn = await db.ref(`users/${targetUid}/depositBalance`).transaction(bal => {
-        const b = bal || 0;
-        if (action === 'DEBIT' && b < amount) return; // Abort
-        return action === 'CREDIT' ? b + amount : b - amount;
-    });
+    // Atomic balance update — single user transaction for consistency
+    const txn = await db.ref(`users/${targetUid}`).transaction(user => {
+        if (!user) return user;
+        const depBal = user.depositBalance || 0;
+        if (action === 'DEBIT' && depBal < amount) return; // Abort
+        user.depositBalance = action === 'CREDIT' ? depBal + amount : depBal - amount;
+        user.walletBalance = (user.depositBalance || 0) + (user.winningBalance || 0);
+        return user;
+    }, undefined, false);
 
     if (!txn.committed) {
-        throw new functions.https.HttpsError('failed-precondition', 'Insufficient deposit balance');
+        throw new HttpsError('failed-precondition', 'Insufficient deposit balance');
     }
 
-    const newBal = txn.snapshot.val() || 0;
+    const userAfterUpdate = txn.snapshot.val();
+    const newBal = userAfterUpdate.depositBalance || 0;
     const oldBal = action === 'CREDIT' ? newBal - amount : newBal + amount;
 
     // Deposit record
@@ -143,18 +149,23 @@ exports.adminWalletUpdate = functions.https.onCall(async (data, context) => {
 
 // ─── Admin Reject Withdrawal (with refund) ──────────────────
 
-exports.adminRejectWithdrawal = functions.https.onCall(async (data, context) => {
-    const adminUid = await assertAdmin(context);
-    const { withdrawalId, reason } = data;
+exports.adminRejectWithdrawal = onCall(async (request) => {
+    const adminUid = await assertAdmin(request);
+    const { withdrawalId, reason } = request.data;
 
-    if (!withdrawalId) throw new functions.https.HttpsError('invalid-argument', 'withdrawalId required');
+    if (!withdrawalId) throw new HttpsError('invalid-argument', 'withdrawalId required');
 
     const wSnap = await db.ref('withdrawals/' + withdrawalId).once('value');
     const w = wSnap.val();
-    if (!w) throw new functions.https.HttpsError('not-found', 'Withdrawal not found');
+    if (!w) throw new HttpsError('not-found', 'Withdrawal not found');
 
-    // Refund
-    await db.ref(`users/${w.userId}/winningBalance`).transaction(b => (b || 0) + w.amount);
+    // Refund + sync walletBalance atomically
+    await db.ref(`users/${w.userId}`).transaction(user => {
+        if (!user) return user;
+        user.winningBalance = (user.winningBalance || 0) + w.amount;
+        user.walletBalance = (user.depositBalance || 0) + user.winningBalance;
+        return user;
+    });
 
     // Update withdrawal
     await db.ref('withdrawals/' + withdrawalId).update({
@@ -165,18 +176,18 @@ exports.adminRejectWithdrawal = functions.https.onCall(async (data, context) => 
     });
 
     // Notify user
-    await sendPush(w.userId, `❌ Withdrawal Update — ₹${w.amount}`, `Your ₹${w.amount} withdrawal request was not approved${reason ? ': ' + reason : ''}. The amount has been refunded to your wallet balance.`, { type: 'WITHDRAWAL_REJECTED' });
+    await sendPush(w.userId, `❌ Withdrawal Update — 🪙 ${w.amount}`, `Your 🪙 ${w.amount} withdrawal request was not approved${reason ? ': ' + reason : ''}. The amount has been refunded to your wallet balance.`, { type: 'WITHDRAWAL_REJECTED' });
 
     return { success: true };
 });
 
 // ─── Admin Cancel Ludo Match ────────────────────────────────
 
-exports.adminCancelLudoMatch = functions.https.onCall(async (data, context) => {
-    const adminUid = await assertAdmin(context);
-    const { matchId, reason } = data;
+exports.adminCancelLudoMatch = onCall(async (request) => {
+    const adminUid = await assertAdmin(request);
+    const { matchId, reason } = request.data;
 
-    if (!matchId) throw new functions.https.HttpsError('invalid-argument', 'matchId required');
+    if (!matchId) throw new HttpsError('invalid-argument', 'matchId required');
 
     const matchRef = db.ref('ludo_matches/' + matchId);
 
@@ -191,7 +202,7 @@ exports.adminCancelLudoMatch = functions.https.onCall(async (data, context) => {
     }, undefined, false); // applyLocally: false — force server read
 
     if (!txn.committed) {
-        throw new functions.https.HttpsError('failed-precondition', 'Cannot cancel');
+        throw new HttpsError('failed-precondition', 'Cannot cancel');
     }
 
     const matchData = txn.snapshot.val();
@@ -209,9 +220,9 @@ exports.adminCancelLudoMatch = functions.https.onCall(async (data, context) => {
 
     // Notify players
     const shortIdAC = matchId.slice(-6).toUpperCase();
-    await sendPush(matchData.creator.uid, `🔄 Admin: Match #${shortIdAC} Cancelled — ₹${matchData.amount} Refunded`, `Your ₹${matchData.amount} Ludo match (#${shortIdAC}) was reviewed and cancelled by admin${reason ? ': ' + reason : ''}. Entry fee refunded.`, { type: 'LUDO_CANCELLED', matchId });
+    await sendPush(matchData.creator.uid, `🔄 Admin: Match #${shortIdAC} Cancelled — 🪙 ${matchData.amount} Refunded`, `Your 🪙 ${matchData.amount} Ludo match (#${shortIdAC}) was reviewed and cancelled by admin${reason ? ': ' + reason : ''}. Entry fee refunded.`, { type: 'LUDO_CANCELLED', matchId });
     if (matchData.acceptor?.uid) {
-        await sendPush(matchData.acceptor.uid, `🔄 Admin: Match #${shortIdAC} Cancelled — ₹${matchData.amount} Refunded`, `Your ₹${matchData.amount} Ludo match (#${shortIdAC}) was reviewed and cancelled by admin${reason ? ': ' + reason : ''}. Entry fee refunded.`, { type: 'LUDO_CANCELLED', matchId });
+        await sendPush(matchData.acceptor.uid, `🔄 Admin: Match #${shortIdAC} Cancelled — 🪙 ${matchData.amount} Refunded`, `Your 🪙 ${matchData.amount} Ludo match (#${shortIdAC}) was reviewed and cancelled by admin${reason ? ': ' + reason : ''}. Entry fee refunded.`, { type: 'LUDO_CANCELLED', matchId });
     }
 
     return { success: true };
@@ -219,62 +230,132 @@ exports.adminCancelLudoMatch = functions.https.onCall(async (data, context) => {
 
 // ─── Admin Resolve Ludo Dispute Push ────────────────────────
 
-exports.adminResolveLudoDispute = functions.https.onCall(async (data, context) => {
-    await assertAdmin(context);
+exports.adminResolveLudoDispute = onCall(async (request) => {
+    const adminUid = await assertAdmin(request);
 
-    const { matchId, winnerId, resolution } = data;
-    if (!matchId) throw new functions.https.HttpsError('invalid-argument', 'matchId required');
+    const { matchId, winnerId, resolution } = request.data;
+    if (!matchId) throw new HttpsError('invalid-argument', 'matchId required');
 
-    const matchSnap = await db.ref('ludo_matches/' + matchId).once('value');
+    const matchRef = db.ref('ludo_matches/' + matchId);
+    const matchSnap = await matchRef.once('value');
     const match = matchSnap.val();
-    if (!match) throw new functions.https.HttpsError('not-found', 'Match not found');
+    if (!match) throw new HttpsError('not-found', 'Match not found');
+
+    // Prevent resolving already-resolved matches
+    if (match.status === 'COMPLETED' || match.status === 'CANCELLED') {
+        throw new HttpsError('failed-precondition', 'Match already resolved');
+    }
 
     const creatorUid = match.creator?.uid;
     const acceptorUid = match.acceptor?.uid;
     const shortIdDR = matchId.slice(-6).toUpperCase();
     const amount = match.amount || 0;
 
-    // Build specific messages based on resolution type
-    let creatorMsg, acceptorMsg;
-    if (winnerId === creatorUid) {
+    // Use dynamic commission rate (consistent with normal match flow)
+    const commissionPercent = await getLudoCommission();
+
+    // ── CASE 1: Admin declares a WINNER ──
+    if (winnerId && (winnerId === creatorUid || winnerId === acceptorUid)) {
         const poolAmount = amount * 2;
-        const commission = Math.ceil(poolAmount * 0.15);
+        const commission = Math.floor(poolAmount * (commissionPercent / 100));
         const winAmount = poolAmount - commission;
-        creatorMsg = `🏆 You won Match #${shortIdDR}! Admin reviewed the dispute and declared you the winner. ₹${winAmount} credited to your wallet.`;
-        acceptorMsg = `Match #${shortIdDR} (₹${amount}) dispute resolved. Admin declared your opponent as the winner after review.`;
-    } else if (winnerId === acceptorUid) {
-        const poolAmount = amount * 2;
-        const commission = Math.ceil(poolAmount * 0.15);
-        const winAmount = poolAmount - commission;
-        creatorMsg = `Match #${shortIdDR} (₹${amount}) dispute resolved. Admin declared your opponent as the winner after review.`;
-        acceptorMsg = `🏆 You won Match #${shortIdDR}! Admin reviewed the dispute and declared you the winner. ₹${winAmount} credited to your wallet.`;
-    } else {
-        // Cancelled/refunded
-        creatorMsg = `Match #${shortIdDR} (₹${amount}) dispute resolved. ${resolution || 'Admin cancelled the match and refunded both players.'}`;
-        acceptorMsg = creatorMsg;
+        const loserUid = winnerId === creatorUid ? acceptorUid : creatorUid;
+
+        // Credit winner's winning balance atomically
+        await db.ref(`users/${winnerId}`).transaction(user => {
+            if (!user) return user;
+            user.winningBalance = (user.winningBalance || 0) + winAmount;
+            user.walletBalance = (user.depositBalance || 0) + user.winningBalance;
+            return user;
+        });
+
+        // Leaderboard stats — winner
+        await db.ref(`users/${winnerId}`).update({
+            'stats/ludoWinnings': admin.database.ServerValue.increment(winAmount),
+            'stats/matchesWon': admin.database.ServerValue.increment(1),
+            'stats/matchesPlayed': admin.database.ServerValue.increment(1)
+        });
+        // Leaderboard stats — loser
+        if (loserUid) {
+            await db.ref(`users/${loserUid}`).update({
+                'stats/matchesPlayed': admin.database.ServerValue.increment(1)
+            });
+        }
+
+        // Update match record
+        await matchRef.update({
+            status: 'COMPLETED',
+            winner: winnerId,
+            winAmount,
+            commission,
+            resolutionReason: resolution || 'Admin resolved dispute',
+            resolvedBy: adminUid,
+            completedAt: admin.database.ServerValue.TIMESTAMP
+        });
+
+        // Record wallet transaction
+        const winnerName = winnerId === creatorUid
+            ? (match.creator.ludoKingUsername || 'Player')
+            : (match.acceptor.ludoKingUsername || 'Player');
+        const txnKey = db.ref('wallet_transactions').push().key;
+        await db.ref('wallet_transactions/' + txnKey).set({
+            userId: winnerId, userName: winnerName, amount: winAmount,
+            type: 'CREDIT', isCredit: true, reason: 'Ludo Dispute Won (Admin)',
+            description: `Won Ludo 🪙 ${amount} challenge (dispute resolved by admin)`,
+            ludoMatchId: matchId, status: 'SUCCESS',
+            timestamp: admin.database.ServerValue.TIMESTAMP
+        });
+
+        // Update platform stats
+        await db.ref('stats/ludoCommission').set(
+            admin.database.ServerValue.increment(commission)
+        );
+
+        // Send push notifications
+        const winnerMsg = `🏆 You won Match #${shortIdDR}! Admin reviewed the dispute and declared you the winner. 🪙 ${winAmount} credited to your wallet.`;
+        const loserMsg = `Match #${shortIdDR} (🪙 ${amount}) dispute resolved. Admin declared your opponent as the winner after review.`;
+
+        if (winnerId === creatorUid) {
+            if (creatorUid) await sendPush(creatorUid, `✅ Dispute Resolved — Match #${shortIdDR}`, winnerMsg, { type: 'LUDO_DISPUTE_RESOLVED', matchId });
+            if (acceptorUid) await sendPush(acceptorUid, `✅ Dispute Resolved — Match #${shortIdDR}`, loserMsg, { type: 'LUDO_DISPUTE_RESOLVED', matchId });
+        } else {
+            if (creatorUid) await sendPush(creatorUid, `✅ Dispute Resolved — Match #${shortIdDR}`, loserMsg, { type: 'LUDO_DISPUTE_RESOLVED', matchId });
+            if (acceptorUid) await sendPush(acceptorUid, `✅ Dispute Resolved — Match #${shortIdDR}`, winnerMsg, { type: 'LUDO_DISPUTE_RESOLVED', matchId });
+        }
+
+        logEvent('adminResolveLudoDispute', 'info', `Dispute resolved — winner: ${winnerId}`, { matchId, winnerId, winAmount, adminUid });
+        return { success: true, winAmount };
     }
 
-    if (creatorUid) {
-        await sendPush(creatorUid, `✅ Dispute Resolved — Match #${shortIdDR}`,
-            creatorMsg,
-            { type: 'LUDO_DISPUTE_RESOLVED', matchId });
-    }
-    if (acceptorUid) {
-        await sendPush(acceptorUid, `✅ Dispute Resolved — Match #${shortIdDR}`,
-            acceptorMsg,
-            { type: 'LUDO_DISPUTE_RESOLVED', matchId });
+    // ── CASE 2: Admin cancels with refund (no winner) ──
+    // Refund both players
+    await refundPlayer(match.creator, matchId, amount, 'Ludo Dispute Cancelled — Admin Refund');
+    if (match.acceptor?.uid) {
+        await refundPlayer(match.acceptor, matchId, amount, 'Ludo Dispute Cancelled — Admin Refund');
     }
 
-    return { success: true };
+    await matchRef.update({
+        status: 'CANCELLED',
+        cancelReason: resolution || 'Admin cancelled disputed match — both refunded',
+        resolvedBy: adminUid,
+        cancelledAt: admin.database.ServerValue.TIMESTAMP
+    });
+
+    const cancelMsg = `Match #${shortIdDR} (🪙 ${amount}) dispute resolved. ${resolution || 'Admin cancelled the match and refunded both players.'}`;
+    if (creatorUid) await sendPush(creatorUid, `✅ Dispute Resolved — Match #${shortIdDR}`, cancelMsg, { type: 'LUDO_DISPUTE_RESOLVED', matchId });
+    if (acceptorUid) await sendPush(acceptorUid, `✅ Dispute Resolved — Match #${shortIdDR}`, cancelMsg, { type: 'LUDO_DISPUTE_RESOLVED', matchId });
+
+    logEvent('adminResolveLudoDispute', 'info', `Dispute cancelled & refunded`, { matchId, adminUid });
+    return { success: true, refunded: true };
 });
 
 // ─── Public: Lookup email by mobile (for mobile login) ──────
 // No auth required — needed before user can log in
 
-exports.lookupEmailByMobile = functions.https.onCall(async (data) => {
-    let { mobile } = data;
+exports.lookupEmailByMobile = onCall(async (request) => {
+    let { mobile } = request.data;
     if (!mobile) {
-        throw new functions.https.HttpsError('invalid-argument', 'Mobile number required');
+        throw new HttpsError('invalid-argument', 'Mobile number required');
     }
 
     // Normalize: strip spaces, dashes, parens, +91, 91 prefix
@@ -283,7 +364,7 @@ exports.lookupEmailByMobile = functions.https.onCall(async (data) => {
     else if (mobile.startsWith('91') && mobile.length === 12) mobile = mobile.substring(2);
 
     if (!/^[0-9]{10}$/.test(mobile)) {
-        throw new functions.https.HttpsError('invalid-argument', 'Valid 10-digit mobile required');
+        throw new HttpsError('invalid-argument', 'Valid 10-digit mobile required');
     }
 
     // Try exact 10-digit match first
@@ -300,15 +381,165 @@ exports.lookupEmailByMobile = functions.https.onCall(async (data) => {
 
     if (!snap.exists()) {
         functions.logger.info('lookupEmailByMobile: no user found for mobile', { mobile });
-        throw new functions.https.HttpsError('not-found', 'No account found with this mobile number');
+        throw new HttpsError('not-found', 'No account found with this mobile number');
     }
 
     let email = null;
     snap.forEach(child => { email = child.val().email; });
 
     if (!email) {
-        throw new functions.https.HttpsError('not-found', 'Account found but email is missing');
+        throw new HttpsError('not-found', 'Account found but email is missing');
     }
 
     return { email };
+});
+
+// ─── Admin Ban/Suspend User ─────────────────────────────────
+
+/**
+ * Ban or warn a user. Supports:
+ * - Permanent ban: duration = null
+ * - Temp ban: duration = '1h', '24h', '7d', '30d'
+ * - Warning: warning = true (auto-bans at 3 warnings)
+ */
+exports.adminBanUser = onCall(async (request) => {
+    const adminUid = await assertAdmin(request);
+    const { uid, reason, duration, warning } = request.data;
+
+    if (!uid) throw new HttpsError('invalid-argument', 'User UID required');
+    if (!reason) throw new HttpsError('invalid-argument', 'Reason required');
+
+    const userRef = db.ref(`users/${uid}`);
+    const userSnap = await userRef.once('value');
+    if (!userSnap.exists()) throw new HttpsError('not-found', 'User not found');
+
+    const userData = userSnap.val();
+    const now = Date.now();
+
+    if (warning) {
+        // ── Issue Warning ──
+        const currentWarnings = (userData.warningCount || 0) + 1;
+        const updates = {
+            warningCount: currentWarnings,
+            lastWarningAt: now,
+            lastWarningReason: reason
+        };
+
+        // Auto-ban at 3 warnings
+        if (currentWarnings >= 3) {
+            updates.isBlocked = true;
+            updates.banReason = `Auto-banned: ${currentWarnings} warnings accumulated`;
+            updates.bannedAt = now;
+            updates.bannedBy = adminUid;
+        }
+
+        await userRef.update(updates);
+
+        // Log to ban_history
+        await db.ref(`ban_history/${uid}`).push({
+            action: currentWarnings >= 3 ? 'AUTO_BAN' : 'WARNING',
+            reason,
+            warningNumber: currentWarnings,
+            adminUid,
+            timestamp: now
+        });
+
+        // Notify user
+        const warnMsg = currentWarnings >= 3
+            ? `⚠️ Your account has been suspended after ${currentWarnings} warnings. Reason: ${reason}`
+            : `⚠️ Warning ${currentWarnings}/3: ${reason}. Your account may be suspended if warnings continue.`;
+        await sendPush(uid, '⚠️ Account Warning', warnMsg, { type: 'ACCOUNT_WARNING' });
+
+        return {
+            success: true,
+            action: currentWarnings >= 3 ? 'AUTO_BAN' : 'WARNING',
+            warningCount: currentWarnings
+        };
+    }
+
+    // ── Issue Ban (Permanent or Temp) ──
+    const durationMap = {
+        '1h': 60 * 60 * 1000,
+        '24h': 24 * 60 * 60 * 1000,
+        '7d': 7 * 24 * 60 * 60 * 1000,
+        '30d': 30 * 24 * 60 * 60 * 1000
+    };
+
+    const banDurationMs = duration ? durationMap[duration] : null;
+    if (duration && !banDurationMs) {
+        throw new HttpsError('invalid-argument',
+            `Invalid duration. Use: ${Object.keys(durationMap).join(', ')} or omit for permanent`);
+    }
+
+    const banUpdate = {
+        isBlocked: true,
+        banReason: reason,
+        bannedAt: now,
+        bannedBy: adminUid
+    };
+
+    if (banDurationMs) {
+        banUpdate.banExpiresAt = now + banDurationMs;
+    } else {
+        banUpdate.banExpiresAt = null; // Permanent
+    }
+
+    await userRef.update(banUpdate);
+
+    // Log to ban_history
+    await db.ref(`ban_history/${uid}`).push({
+        action: 'BAN',
+        reason,
+        duration: duration || 'PERMANENT',
+        expiresAt: banUpdate.banExpiresAt || null,
+        adminUid,
+        timestamp: now
+    });
+
+    // Notify user
+    const banMsg = banDurationMs
+        ? `Your account has been suspended for ${duration}. Reason: ${reason}`
+        : `Your account has been permanently suspended. Reason: ${reason}`;
+    await sendPush(uid, '🚫 Account Suspended', banMsg, { type: 'ACCOUNT_BANNED' });
+
+    return {
+        success: true,
+        action: 'BAN',
+        duration: duration || 'PERMANENT',
+        expiresAt: banUpdate.banExpiresAt || null
+    };
+});
+
+// ─── Admin Unban User ───────────────────────────────────────
+
+exports.adminUnbanUser = onCall(async (request) => {
+    const adminUid = await assertAdmin(request);
+    const { uid, reason } = request.data;
+
+    if (!uid) throw new HttpsError('invalid-argument', 'User UID required');
+
+    const userRef = db.ref(`users/${uid}`);
+    const userSnap = await userRef.once('value');
+    if (!userSnap.exists()) throw new HttpsError('not-found', 'User not found');
+
+    await userRef.update({
+        isBlocked: false,
+        banReason: null,
+        banExpiresAt: null,
+        bannedAt: null,
+        bannedBy: null
+    });
+
+    // Log to ban_history
+    await db.ref(`ban_history/${uid}`).push({
+        action: 'UNBAN',
+        reason: reason || 'Unbanned by admin',
+        adminUid,
+        timestamp: Date.now()
+    });
+
+    // Notify user
+    await sendPush(uid, '✅ Account Restored', 'Your account suspension has been lifted.', { type: 'ACCOUNT_UNBANNED' });
+
+    return { success: true };
 });

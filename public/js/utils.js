@@ -1,6 +1,32 @@
 // JeetoPlay — UI Utilities
 // Auto-extracted from app.html
 
+// ─── Coin Economy Formatter (1 Coin = ₹1) ───
+// Returns HTML string with inline coin icon + amount
+function formatCoin(amount, opts = {}) {
+    const val = typeof amount === 'number' ? amount : parseFloat(amount) || 0;
+    const display = opts.short ? coinAbbrev(val) : val.toLocaleString('en-IN');
+    const sign = opts.sign === '+' ? '+' : opts.sign === '-' ? '-' : '';
+    const icon = '<img src="/assets/coin.svg" class="coin-icon" alt="coin">';
+    return `${sign}${icon}<span class="coin-amount">${display}</span>`;
+}
+
+// Plain text version — for toasts, inputs, and non-HTML contexts
+function formatCoinText(amount, opts = {}) {
+    const val = typeof amount === 'number' ? amount : parseFloat(amount) || 0;
+    const display = opts.short ? coinAbbrev(val) : val.toLocaleString('en-IN');
+    const sign = opts.sign === '+' ? '+' : opts.sign === '-' ? '-' : '';
+    return `${sign}🪙 ${display}`;
+}
+
+// Abbreviate large numbers
+function coinAbbrev(n) {
+    if (n >= 10000000) return (n / 10000000).toFixed(1).replace(/\.0$/, '') + 'Cr';
+    if (n >= 100000) return (n / 100000).toFixed(1).replace(/\.0$/, '') + 'L';
+    if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return n.toString();
+}
+
 function showToast(msg, type = 'success') {
     const el = document.createElement('div');
     el.style.background = type === 'error' ? 'var(--danger)' : 'var(--primary)';
@@ -39,9 +65,9 @@ function showAppShell() {
         const el = document.getElementById(id);
         if (el) el.innerText = val;
     };
-    setLoading('header-balance', '₹...');
+    setLoading('header-balance', '🪙 ...');
     setLoading('profile-fullname', 'Loading...');
-    setLoading('profile-balance', '₹...');
+    setLoading('profile-balance', '🪙 ...');
 
     // Start loading content in parallel (non-blocking)
     console.log('[PERF] Starting parallel content load');
@@ -89,26 +115,37 @@ function updateUIHeader() {
         const winningBal = state.userData.winningBalance || 0;
         const totalBal = depositBal + winningBal;
 
-        // Helper to safely set element text
+        // Helper to safely set element HTML (for coin icon support)
+        const setElHTML = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = val;
+        };
+        // Helper for plain text fields
         const setEl = (id, val) => {
             const el = document.getElementById(id);
             if (el) el.innerText = val;
         };
 
-        // Header balance (total)
-        setEl('header-balance', '₹' + totalBal);
+        // Header balance (total) — with coin icon
+        setElHTML('header-balance', formatCoin(totalBal));
 
         // Update profile fields (with null checks)
         setEl('profile-fullname', state.userData.fullName || 'User');
         setEl('profile-email', state.userData.email || '');
         setEl('profile-mobile', state.userData.mobile || '-');
         setEl('profile-avatar', (state.userData.fullName || 'U').charAt(0).toUpperCase());
-        setEl('profile-balance', '₹' + totalBal);
+        setElHTML('profile-balance', formatCoin(totalBal));
 
-        // Update wallet view
-        setEl('wallet-deposit-bal', '₹' + depositBal);
-        setEl('wallet-winning-bal', '₹' + winningBal);
-        setEl('wallet-total-bal', '₹' + totalBal);
+        // Update VIP badge in profile
+        const vipBadgeEl = document.getElementById('profile-vip-badge');
+        if (vipBadgeEl) {
+            vipBadgeEl.innerHTML = (typeof isCurrentUserVip === 'function' && isCurrentUserVip()) ? getVipBadgeHtml() : '';
+        }
+
+        // Update wallet view — with coin icon
+        setElHTML('wallet-deposit-bal', formatCoin(depositBal));
+        setElHTML('wallet-winning-bal', formatCoin(winningBal));
+        setElHTML('wallet-total-bal', formatCoin(totalBal));
     }
 }
 
@@ -129,4 +166,29 @@ function switchTab(tabName) {
         navItem.click();
     }
 }
+
+// ─── External URL Handler ───
+// Opens URLs in external apps/browsers instead of inside the WebView.
+// IMPORTANT: Do NOT use this for payment gateway URLs — those must stay in-app.
+// This is specifically for slider links, contact links (WhatsApp, Insta, YT, Telegram), etc.
+window.openExternalUrl = function (url) {
+    if (!url) return;
+
+    // Ensure URL has a protocol
+    let fullUrl = url;
+    if (!fullUrl.startsWith('http://') && !fullUrl.startsWith('https://') && !fullUrl.startsWith('mailto:')) {
+        fullUrl = 'https://' + fullUrl;
+    }
+
+    // Detect if running inside Android WebView — use native bridge to open externally
+    const isAndroidWebView = typeof AndroidNative !== 'undefined' && AndroidNative.isNativeApp && AndroidNative.isNativeApp();
+
+    if (isAndroidWebView && typeof AndroidNative.openExternal === 'function') {
+        // Native bridge opens URL in external app (WhatsApp, Instagram, YouTube, Chrome, etc.)
+        AndroidNative.openExternal(fullUrl);
+    } else {
+        // Regular browser — open in new tab as normal
+        window.open(fullUrl, '_blank');
+    }
+};
 

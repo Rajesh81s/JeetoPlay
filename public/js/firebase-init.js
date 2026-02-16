@@ -13,12 +13,14 @@ const firebaseConfig = {
     measurementId: "G-B2XCRLH6DR"
 };
 
-let app, db, auth, functions, messaging;
+let app, db, auth, functions, messaging, storage;
 try {
     app = firebase.initializeApp(firebaseConfig);
     db = firebase.database();
     auth = firebase.auth();
     functions = firebase.functions();
+    storage = firebase.storage();
+    window.fbStorage = storage; // expose for image uploads
 
     // Initialize FCM if supported
     if ('serviceWorker' in navigator && 'PushManager' in window) {

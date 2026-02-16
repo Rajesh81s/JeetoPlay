@@ -27,6 +27,56 @@
             --glass-blur: blur(16px);
         }
 
+        /* ==================== LIGHT THEME ==================== */
+        [data-theme="light"] {
+            --primary: #00c96e;
+            --primary-dim: #00c96e33;
+            --primary-glow: rgba(0, 201, 110, 0.15);
+            --bg-dark: #f5f5f8;
+            --bg-card: rgba(255, 255, 255, 0.9);
+            --bg-card-solid: #ffffff;
+            --bg-hover: #eeeef2;
+            --bg-surface: rgba(240, 240, 245, 0.8);
+            --text-main: #1a1a2e;
+            --text-muted: #6b7280;
+            --danger: #ef4444;
+            --success: #059669;
+            --warning: #d97706;
+            --border: rgba(0, 0, 0, 0.08);
+            --border-light: rgba(0, 0, 0, 0.12);
+            --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.06);
+            --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+            --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.1);
+            --glass-bg: rgba(255, 255, 255, 0.85);
+            --glass-border: rgba(0, 0, 0, 0.06);
+        }
+
+        [data-theme="light"] body {
+            background-color: var(--bg-dark);
+        }
+
+        [data-theme="light"] .logo {
+            background: linear-gradient(135deg, #00a85a, #00c96e);
+            -webkit-background-clip: text;
+            background-clip: text;
+        }
+
+        [data-theme="light"] #auth-view {
+            background: radial-gradient(ellipse at top center, #f0f0f5 0%, #e8e8f0 60%);
+        }
+
+        [data-theme="light"] #auth-view::before {
+            background: radial-gradient(circle, rgba(0, 201, 110, 0.06) 0%, transparent 50%);
+        }
+
+        [data-theme="light"] .amount-slab {
+            background: linear-gradient(145deg, #f0f0f5, #e8e8ed);
+        }
+
+        [data-theme="light"] ::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.15);
+        }
+
         * {
             margin: 0;
             padding: 0;

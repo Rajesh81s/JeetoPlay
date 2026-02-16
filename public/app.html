@@ -17,6 +17,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <link rel="stylesheet" href="css/app.css?v=2">
+    <script src="js/theme_toggle.js?v=1"></script>
 </head>
 
 <body>
@@ -209,7 +210,7 @@
                 </div>
                 <div class="chip" onclick="openWalletFromHeader()" style="cursor: pointer;">
                     <i class="fa-solid fa-wallet" style="color: var(--success);"></i>
-                    <span id="header-balance" style="font-weight: 600;">₹0</span>
+                    <span id="header-balance" style="font-weight: 600;">🪙 0</span>
                 </div>
             </div>
         </header>
@@ -233,19 +234,39 @@
                     <div class="slider-dots" id="slider-dots"></div>
                 </div>
 
+                <!-- Smart Notifications -->
+                <style>
+                    @keyframes sn-slide-in {
+                        from {
+                            opacity: 0;
+                            transform: translateY(-8px);
+                        }
+
+                        to {
+                            opacity: 1;
+                            transform: translateY(0);
+                        }
+                    }
+                </style>
+                <div id="smart-notifications" style="margin-bottom:12px;display:none;"></div>
+
                 <!-- Premium Mode Toggle -->
                 <div id="mode-toggle"
                     style="display: flex; background: var(--bg-hover); border-radius: 14px; padding: 5px; margin-bottom: 1.5rem; position: relative; overflow: hidden; border: 1px solid var(--border);">
                     <div id="toggle-slider"
-                        style="position: absolute; top: 5px; left: 5px; width: calc(50% - 5px); height: calc(100% - 10px); background: linear-gradient(135deg, var(--primary), #00d672); border-radius: 10px; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1; box-shadow: 0 2px 12px rgba(0,255,136,0.25);">
+                        style="position: absolute; top: 5px; left: 5px; width: calc(33.33% - 3px); height: calc(100% - 10px); background: linear-gradient(135deg, var(--primary), #00d672); border-radius: 10px; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1; box-shadow: 0 2px 12px rgba(0,255,136,0.25);">
                     </div>
                     <button id="toggle-esports" onclick="switchHomeMode('esports')"
-                        style="flex: 1; padding: 12px; background: transparent; border: none; color: #000; font-weight: 700; font-size: 0.95rem; cursor: pointer; z-index: 2; transition: color 0.3s;">
+                        style="flex: 1; padding: 10px 6px; background: transparent; border: none; color: #000; font-weight: 700; font-size: 0.85rem; cursor: pointer; z-index: 2; transition: color 0.3s;">
                         <i class="fa-solid fa-trophy"></i> eSports
                     </button>
                     <button id="toggle-ludo" onclick="switchHomeMode('ludo')"
-                        style="flex: 1; padding: 12px; background: transparent; border: none; color: var(--text-muted); font-weight: 700; font-size: 0.95rem; cursor: pointer; z-index: 2; transition: color 0.3s;">
+                        style="flex: 1; padding: 10px 6px; background: transparent; border: none; color: var(--text-muted); font-weight: 700; font-size: 0.85rem; cursor: pointer; z-index: 2; transition: color 0.3s;">
                         <i class="fa-solid fa-dice"></i> Ludo
+                    </button>
+                    <button id="toggle-tournaments" onclick="switchHomeMode('tournaments')"
+                        style="flex: 1; padding: 10px 6px; background: transparent; border: none; color: var(--text-muted); font-weight: 700; font-size: 0.85rem; cursor: pointer; z-index: 2; transition: color 0.3s;">
+                        <i class="fa-solid fa-crown"></i> Tourney
                     </button>
                 </div>
 
@@ -307,6 +328,67 @@
                     <!-- Matches List -->
                     <div id="matches-list">
                         <!-- Matches injected -->
+                    </div>
+                </div>
+
+                <!-- Tournament Content (Hidden by default) -->
+                <div id="home-tournaments-content" class="hidden">
+                    <!-- Tournament Header -->
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <div>
+                            <h3 style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                                <i class="fa-solid fa-crown" style="color: #fbbf24;"></i> Tournaments
+                            </h3>
+                            <p class="text-muted" style="font-size: 0.75rem; margin-top: 2px;">Compete in elimination
+                                brackets & win big</p>
+                        </div>
+                    </div>
+
+                    <!-- Tournament My Tournaments Dropdown -->
+                    <div style="margin-bottom: 1rem;">
+                        <button id="my-tournaments-toggle" onclick="toggleMyTournaments()"
+                            style="width: 100%; background: var(--bg-card-solid); border: 1px solid var(--border-light); border-radius: var(--radius-md); padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; color: var(--text-main);">
+                            <span style="display: flex; align-items: center; gap: 10px;">
+                                <i class="fa-solid fa-crown" style="color: #fbbf24; font-size: 1.1rem;"></i>
+                                <span style="font-weight: 600;">My Tournaments</span>
+                                <span id="my-tournaments-count"
+                                    style="background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #000; font-size: 0.72rem; padding: 2px 9px; border-radius: 10px; font-weight: 700;">0</span>
+                            </span>
+                            <i id="my-tournaments-arrow" class="fa-solid fa-chevron-down"
+                                style="color: var(--text-muted); transition: transform 0.3s;"></i>
+                        </button>
+                        <div id="my-tournaments-dropdown" style="display: none; margin-top: 8px;">
+                            <div id="my-tournaments-list" style="display: grid; gap: 10px;">
+                                <!-- My tournaments injected -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tournament Status Filters -->
+                    <div style="display: flex; gap: 6px; margin-bottom: 1rem; overflow-x: auto; padding-bottom: 4px;">
+                        <button class="btn btn-primary btn-sm active-tournament-filter"
+                            style="white-space: nowrap; font-size: 0.78rem;"
+                            onclick="filterUserTournaments('OPEN', this)">
+                            <i class="fa-solid fa-door-open"></i> Open
+                        </button>
+                        <button class="btn btn-outline btn-sm" style="white-space: nowrap; font-size: 0.78rem;"
+                            onclick="filterUserTournaments('ACTIVE', this)">
+                            <i class="fa-solid fa-play"></i> Active
+                        </button>
+                        <button class="btn btn-outline btn-sm" style="white-space: nowrap; font-size: 0.78rem;"
+                            onclick="filterUserTournaments('COMPLETED', this)">
+                            <i class="fa-solid fa-crown"></i> Completed
+                        </button>
+                        <button class="btn btn-outline btn-sm" style="white-space: nowrap; font-size: 0.78rem;"
+                            onclick="filterUserTournaments('ALL', this)">
+                            All
+                        </button>
+                    </div>
+
+                    <!-- Tournament Cards -->
+                    <div id="user-tournament-list" style="display: grid; gap: 12px;">
+                        <!-- Tournament cards injected -->
                     </div>
                 </div>
 
@@ -428,7 +510,7 @@
                 <div style="font-weight: 600; font-size: 0.9rem;">Your Rank</div>
                 <div style="display: flex; gap: 12px; margin-top: 2px;">
                     <span class="text-muted" style="font-size: 0.75rem;">Winnings: <strong
-                            style="color: var(--success);" id="lb-my-winnings">₹0</strong></span>
+                            style="color: var(--success);" id="lb-my-winnings">🪙 0</strong></span>
                     <span id="lb-my-level-badge" class="lb-rank-level lb-level-bronze">Bronze</span>
                 </div>
             </div>
@@ -477,9 +559,138 @@
     <div id="view-earn" class="view-section hidden">
         <!-- Header -->
         <div style="text-align: center; margin-bottom: 1.5rem;">
-            <h2 style="margin-bottom: 5px;"><i class="fa-solid fa-gift" style="color: var(--primary);"></i> Refer & Earn
+            <h2 style="margin-bottom: 5px;"><i class="fa-solid fa-coins" style="color: var(--primary);"></i> Earn & Win
             </h2>
-            <p class="text-muted" style="font-size: 0.85rem;">Share your code and earn rewards!</p>
+            <p class="text-muted" style="font-size: 0.85rem;">Spin, refer & earn real rewards!</p>
+        </div>
+
+        <!-- ═══ SPIN WHEEL SECTION ═══ -->
+        <div id="spin-wheel-section" style="margin-bottom: 24px;">
+            <!-- Spin Wheel Card -->
+            <div
+                style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%); border-radius: 20px; padding: 24px 16px; position: relative; overflow: hidden; border: 1px solid rgba(139,92,246,0.3); box-shadow: 0 8px 40px rgba(139,92,246,0.15);">
+                <!-- Sparkle decorations -->
+                <div
+                    style="position:absolute;top:12px;left:16px;font-size:1.2rem;opacity:0.4;animation:pulse 3s infinite;">
+                    ✨</div>
+                <div
+                    style="position:absolute;top:20px;right:20px;font-size:1rem;opacity:0.3;animation:pulse 2.5s infinite 0.5s;">
+                    ⭐</div>
+                <div
+                    style="position:absolute;bottom:30px;left:24px;font-size:0.9rem;opacity:0.25;animation:pulse 2s infinite 1s;">
+                    💫</div>
+
+                <!-- Title + Spin Count -->
+                <div style="text-align:center;margin-bottom:16px;">
+                    <h3 style="color:#fff;margin:0 0 6px;font-size:1.2rem;text-shadow:0 0 20px rgba(139,92,246,0.5);">
+                        🎰 Lucky Spin Wheel
+                    </h3>
+                    <div
+                        style="display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,0.08);padding:6px 14px;border-radius:20px;backdrop-filter:blur(8px);">
+                        <span id="sw-spin-count"
+                            style="width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;color:#fff;background:linear-gradient(135deg,#ec4899,#a855f7);">0</span>
+                        <span id="sw-spin-label" style="color:rgba(255,255,255,0.7);font-size:0.8rem;">Loading...</span>
+                    </div>
+                </div>
+
+                <!-- Wheel Container -->
+                <div style="position:relative;width:280px;height:280px;margin:0 auto 20px;">
+                    <!-- Outer glow ring -->
+                    <div
+                        style="position:absolute;inset:-6px;border-radius:50%;background:conic-gradient(from 0deg, #a855f7, #ec4899, #f59e0b, #10b981, #3b82f6, #a855f7);padding:3px;animation:spin-glow 4s linear infinite;">
+                        <div style="width:100%;height:100%;border-radius:50%;background:#0f172a;"></div>
+                    </div>
+
+                    <!-- Pointer (top center) -->
+                    <div
+                        style="position:absolute;top:-14px;left:50%;transform:translateX(-50%);z-index:10;filter:drop-shadow(0 0 8px rgba(236,72,153,0.6));">
+                        <div
+                            style="width:0;height:0;border-left:14px solid transparent;border-right:14px solid transparent;border-top:24px solid #ec4899;">
+                        </div>
+                    </div>
+
+                    <!-- The spinning wheel -->
+                    <div id="sw-wheel-container" style="position:absolute;inset:3px;border-radius:50%;overflow:hidden;">
+                        <svg id="sw-wheel" viewBox="0 0 300 300" width="100%" height="100%"
+                            style="display:block;"></svg>
+                    </div>
+
+                    <!-- Center button -->
+                    <button id="sw-spin-btn" onclick="spinTheWheel()"
+                        style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;border:3px solid rgba(255,255,255,0.3);background:linear-gradient(135deg,#a855f7,#ec4899);color:#fff;font-size:1.3rem;cursor:pointer;z-index:5;box-shadow:0 0 20px rgba(168,85,247,0.5),inset 0 -2px 6px rgba(0,0,0,0.2);transition:all 0.3s ease;">
+                        <i class="fa-solid fa-rotate"></i>
+                    </button>
+                </div>
+
+                <!-- Stats Row -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                    <div
+                        style="background:rgba(255,255,255,0.05);padding:12px;border-radius:12px;text-align:center;border:1px solid rgba(255,255,255,0.08);">
+                        <div id="sw-total-spins" style="font-size:1.4rem;font-weight:700;color:#a855f7;">0</div>
+                        <p style="font-size:0.72rem;color:rgba(255,255,255,0.5);margin:0;">Total Spins</p>
+                    </div>
+                    <div
+                        style="background:rgba(255,255,255,0.05);padding:12px;border-radius:12px;text-align:center;border:1px solid rgba(255,255,255,0.08);">
+                        <div id="sw-total-won" style="font-size:1.4rem;font-weight:700;color:#10b981;">🪙 0</div>
+                        <p style="font-size:0.72rem;color:rgba(255,255,255,0.5);margin:0;">Total Won</p>
+                    </div>
+                </div>
+
+                <!-- How to earn spins -->
+                <div
+                    style="margin-top:14px;padding:10px 14px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid rgba(255,255,255,0.06);">
+                    <p style="color:rgba(255,255,255,0.6);font-size:0.72rem;margin:0;text-align:center;">
+                        🎁 <strong>1 free spin daily</strong> &nbsp;•&nbsp; 🎮 Play matches to earn extra spins
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Spin Result Popup -->
+        <div id="sw-result-popup" class="hidden"
+            style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1100;align-items:center;justify-content:center;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);"
+            onclick="closeSpinResult()">
+            <div style="background:linear-gradient(135deg,#1e1b4b,#0f172a);border:1px solid rgba(139,92,246,0.4);border-radius:24px;padding:32px 24px;text-align:center;max-width:300px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.5);"
+                onclick="event.stopPropagation()">
+                <div id="sw-result-icon" style="font-size:3rem;margin-bottom:12px;">💰</div>
+                <h3 id="sw-result-title" style="color:#10b981;margin:0 0 8px;font-size:1.3rem;">You won!</h3>
+                <p id="sw-result-desc" style="color:rgba(255,255,255,0.7);margin:0 0 16px;font-size:0.9rem;">Prize
+                    details</p>
+                <button onclick="closeSpinResult()"
+                    style="background:linear-gradient(135deg,#a855f7,#ec4899);border:none;color:#fff;padding:10px 28px;border-radius:12px;font-weight:600;cursor:pointer;">
+                    Awesome! 🎉
+                </button>
+            </div>
+        </div>
+
+        <!-- ═══ VIP MEMBERSHIP SECTION ═══ -->
+        <div id="vip-section" style="margin-bottom: 24px;">
+            <div
+                style="background: linear-gradient(135deg, #1a1500 0%, #2d2006 50%, #1a1500 100%); border-radius: 20px; padding: 24px 16px; position: relative; overflow: hidden; border: 1px solid rgba(250,204,21,0.25); box-shadow: 0 8px 40px rgba(250,204,21,0.1);">
+                <!-- Gold shimmer decorations -->
+                <div
+                    style="position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(250,204,21,0.4),transparent);">
+                </div>
+                <div
+                    style="position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(250,204,21,0.2),transparent);">
+                </div>
+
+                <!-- Dynamic content rendered by vip.js -->
+                <div id="vip-card-content">
+                    <div style="text-align:center;padding:20px 0;">
+                        <i class="fa-solid fa-spinner fa-spin" style="color:rgba(250,204,21,0.4);font-size:1.2rem;"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ DIVIDER ═══ -->
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+            <div style="flex:1;height:1px;background:var(--border);"></div>
+            <span
+                style="color:var(--text-muted);font-size:0.75rem;font-weight:500;text-transform:uppercase;letter-spacing:1px;">Refer
+                & Earn</span>
+            <div style="flex:1;height:1px;background:var(--border);"></div>
         </div>
 
         <!-- Your Referral Code Card -->
@@ -512,7 +723,7 @@
             </div>
             <div
                 style="background: var(--bg-card); padding: 16px; border-radius: 12px; text-align: center; border: 1px solid var(--border);">
-                <div id="referral-earnings" style="font-size: 2rem; font-weight: 700; color: var(--success);">₹0</div>
+                <div id="referral-earnings" style="font-size: 2rem; font-weight: 700; color: var(--success);">🪙 0</div>
                 <p style="font-size: 0.8rem; color: var(--text-muted);">Total Earned</p>
             </div>
         </div>
@@ -537,7 +748,7 @@
                     <span
                         style="width: 30px; height: 30px; background: linear-gradient(135deg, var(--success), #10b981); color: #000; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.85rem; flex-shrink: 0; box-shadow: 0 2px 8px rgba(52,211,153,0.2);">3</span>
                     <span style="font-size: 0.88rem;">You earn <strong id="referral-reward-amount"
-                            style="color: var(--primary);">₹5</strong>
+                            style="color: var(--primary);">🪙 5</strong>
                         after they play 3 games!</span>
                 </div>
             </div>
@@ -582,7 +793,7 @@
                     style="font-size: 0.68rem; color: rgba(255,255,255,0.6); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; font-weight: 500;">
                     <i class="fa-solid fa-arrow-down" style="opacity: 0.7;"></i> Deposit
                 </div>
-                <div id="wallet-deposit-bal" style="font-size: 1.5rem; font-weight: 700; color: #4dd0e1;">₹0</div>
+                <div id="wallet-deposit-bal" style="font-size: 1.5rem; font-weight: 700; color: #4dd0e1;">🪙 0</div>
                 <div style="font-size: 0.63rem; color: rgba(255,255,255,0.4); margin-top: 6px;">For joining matches
                 </div>
             </div>
@@ -597,7 +808,7 @@
                     style="font-size: 0.68rem; color: rgba(255,255,255,0.6); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; font-weight: 500;">
                     <i class="fa-solid fa-trophy" style="opacity: 0.7;"></i> Winnings
                 </div>
-                <div id="wallet-winning-bal" style="font-size: 1.5rem; font-weight: 700; color: var(--primary);">₹0
+                <div id="wallet-winning-bal" style="font-size: 1.5rem; font-weight: 700; color: var(--primary);">🪙 0
                 </div>
                 <div style="font-size: 0.63rem; color: rgba(255,255,255,0.4); margin-top: 6px;">Withdrawable</div>
             </div>
@@ -609,19 +820,52 @@
             <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">TOTAL BALANCE</div>
             <div id="wallet-total-bal"
                 style="font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, var(--primary), #4dd0e1); background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; color: transparent;">
-                ₹0</div>
+                🪙 0</div>
         </div>
 
         <!-- Action Buttons -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 2rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 1.5rem;">
             <button onclick="openDepositModal()" class="btn btn-primary"
                 style="padding: 16px; font-size: 1rem; justify-content: center; gap: 8px;">
-                <i class="fa-solid fa-plus"></i> Deposit
+                <i class="fa-solid fa-plus"></i> Buy Coins
             </button>
             <button onclick="openWithdrawModal()" class="btn btn-outline"
                 style="padding: 16px; font-size: 1rem; justify-content: center; gap: 8px; border-color: var(--success); color: var(--success);">
-                <i class="fa-solid fa-arrow-up"></i> Withdraw
+                <i class="fa-solid fa-arrow-up"></i> Withdraw Coins
             </button>
+        </div>
+
+        <!-- Promo Code Section -->
+        <div
+            style="background: var(--bg-card); border-radius: 14px; border: 1px solid var(--border); margin-bottom: 1.5rem; overflow: hidden;">
+            <div
+                style="background: linear-gradient(135deg, rgba(168,85,247,0.12), rgba(236,72,153,0.08)); padding: 14px 16px; border-bottom: 1px solid rgba(168,85,247,0.15);">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <div
+                        style="width: 36px; height: 36px; background: linear-gradient(135deg, #a855f7, #ec4899); border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                        <i class="fa-solid fa-ticket" style="color: white; font-size: 0.95rem;"></i>
+                    </div>
+                    <div>
+                        <div style="font-weight: 600; font-size: 0.95rem;">Apply Promo Code</div>
+                        <div style="font-size: 0.72rem; color: var(--text-muted);">Enter a code to get bonus balance
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div style="padding: 14px 16px;">
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="promo-code-input" class="form-input" placeholder="Enter promo code"
+                        maxlength="20"
+                        style="flex: 1; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; font-size: 0.95rem;">
+                    <button id="apply-promo-btn" onclick="redeemCouponCode()" class="btn"
+                        style="background: linear-gradient(135deg, #a855f7, #ec4899); color: white; padding: 10px 20px; white-space: nowrap; font-weight: 600;">
+                        <i class="fa-solid fa-check"></i> Apply
+                    </button>
+                </div>
+                <div id="promo-result"
+                    style="display: none; margin-top: 10px; padding: 10px; border-radius: 8px; font-size: 0.85rem; text-align: center;">
+                </div>
+            </div>
         </div>
 
         <!-- Transaction History -->
@@ -663,7 +907,9 @@
                     </div>
                 </div>
                 <div style="flex: 1; min-width: 0;">
-                    <h2 id="profile-fullname" style="margin: 0; font-size: 1.25rem; letter-spacing: -0.01em;">User</h2>
+                    <h2 id="profile-fullname"
+                        style="margin: 0; font-size: 1.25rem; letter-spacing: -0.01em; display: inline;">User</h2><span
+                        id="profile-vip-badge"></span>
                     <p class="text-muted" id="profile-email"
                         style="margin: 4px 0 0 0; font-size: 0.83rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                         email@example.com</p>
@@ -691,7 +937,7 @@
                         <span class="text-muted" style="font-size: 0.75rem;">Rank: <strong
                                 style="color: var(--primary);" id="profile-rank-num">#-</strong></span>
                         <span class="text-muted" style="font-size: 0.75rem;">Won: <strong style="color: var(--success);"
-                                id="profile-rank-winnings">₹0</strong></span>
+                                id="profile-rank-winnings">🪙 0</strong></span>
                         <span class="text-muted" style="font-size: 0.75rem;">Played: <strong
                                 id="profile-rank-played">0</strong></span>
                     </div>
@@ -716,8 +962,8 @@
                         <span class="text-muted" style="font-size: 0.75rem; display: block;">Deposit, withdraw &
                             history</span>
                     </div>
-                    <span id="profile-balance"
-                        style="color: var(--success); font-weight: 600; margin-right: 8px;">₹0</span>
+                    <span id="profile-balance" style="color: var(--success); font-weight: 600; margin-right: 8px;">🪙
+                        0</span>
                     <i class="fa-solid fa-chevron-right text-muted" style="font-size: 0.8rem;"></i>
                 </div>
                 <div onclick="switchTab('mygames')" class="profile-menu-item"
@@ -752,9 +998,9 @@
                 User Settings</h4>
             <div
                 style="background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border); overflow: hidden;">
-                <div onclick="openEditProfileModal()" class="profile-menu-item"
+                <div onclick="viewProfileDetails()" class="profile-menu-item"
                     style="display: flex; align-items: center; padding: 14px 16px; cursor: pointer; border-bottom: 1px solid var(--border);">
-                    <i class="fa-solid fa-user-pen"
+                    <i class="fa-solid fa-user"
                         style="width: 35px; height: 35px; background: rgba(59,130,246,0.1); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #3b82f6; font-size: 1rem;"></i>
                     <span style="flex: 1; margin-left: 12px; font-weight: 500;">My Profile</span>
                     <i class="fa-solid fa-chevron-right text-muted" style="font-size: 0.8rem;"></i>
@@ -764,6 +1010,14 @@
                     <i class="fa-solid fa-bell"
                         style="width: 35px; height: 35px; background: rgba(168,85,247,0.1); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #a855f7; font-size: 1rem;"></i>
                     <span style="flex: 1; margin-left: 12px; font-weight: 500;">Notifications</span>
+                    <i class="fa-solid fa-chevron-right text-muted" style="font-size: 0.8rem;"></i>
+                </div>
+                <div onclick="toggleTheme()" class="profile-menu-item"
+                    style="display: flex; align-items: center; padding: 14px 16px; cursor: pointer; border-bottom: 1px solid var(--border);">
+                    <i id="theme-toggle-icon" class="fa-solid fa-sun"
+                        style="width: 35px; height: 35px; background: rgba(251,191,36,0.1); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #fbbf24; font-size: 1rem;"></i>
+                    <span id="theme-toggle-label" style="flex: 1; margin-left: 12px; font-weight: 500;">Light
+                        Mode</span>
                     <i class="fa-solid fa-chevron-right text-muted" style="font-size: 0.8rem;"></i>
                 </div>
                 <div onclick="shareApp()" class="profile-menu-item"
@@ -871,13 +1125,13 @@
                     <div>
                         <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Entry Fee
                         </div>
-                        <div style="font-size: 1.2rem; font-weight: 700; color: var(--success);">₹<span
+                        <div style="font-size: 1.2rem; font-weight: 700; color: var(--success);">🪙 <span
                                 id="slot-entry-fee">0</span>/slot</div>
                     </div>
                     <div style="text-align: right;">
                         <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Your
                             Balance</div>
-                        <div style="font-size: 1.1rem; font-weight: 600; color: var(--primary);">₹<span
+                        <div style="font-size: 1.1rem; font-weight: 600; color: var(--primary);">🪙 <span
                                 id="slot-user-balance">0</span></div>
                     </div>
                 </div>
@@ -915,7 +1169,7 @@
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <span style="color: var(--text-muted);">Total Amount</span>
                         <span id="slot-total-amount"
-                            style="font-size: 1.3rem; font-weight: 700; color: var(--success);">₹0</span>
+                            style="font-size: 1.3rem; font-weight: 700; color: var(--success);">🪙 0</span>
                     </div>
                 </div>
 
@@ -956,12 +1210,13 @@
     <div id="join-match-modal" class="modal-overlay hidden">
         <div class="modal-content">
             <h3 style="margin-bottom: 1rem;">Join Match</h3>
-            <p class="text-muted" style="margin-bottom: 1rem;">Entry Fee: <span class="text-primary"
-                    id="join-fee">₹0</span></p>
+            <p class="text-muted" style="margin-bottom: 1rem;">Entry Fee: <span class="text-primary" id="join-fee">🪙
+                    0</span></p>
             <p style="margin-bottom: 1rem; font-size: 0.9rem;">Room ID & Password will be visible 15 mins before match
                 start.</p>
             <input type="text" id="join-ign" class="form-input" placeholder="Enter Game Username (IGN)" required>
-            <button class="btn btn-primary btn-block" onclick="confirmJoinMatch()">Pay & Join</button>
+            <button class="btn btn-primary btn-block"
+                onclick="closeModal('join-match-modal'); openSlotModal(state.currentMatchId)">Pay & Join</button>
             <button class="btn btn-outline btn-block" style="margin-top: 10px;"
                 onclick="closeModal('join-match-modal')">Cancel</button>
         </div>
@@ -975,19 +1230,19 @@
             <input type="text" id="challenge-ludo-username" class="form-input"
                 placeholder="Enter your Ludo King username" maxlength="30">
 
-            <label style="margin-top: 0.75rem;">Amount (₹)</label>
+            <label style="margin-top: 0.75rem;">Amount (Coins)</label>
 
             <!-- Quick Amount Slabs -->
             <div id="amount-slabs"
                 style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;">
-                <button type="button" onclick="setAmount(10)" class="amount-slab">₹10</button>
-                <button type="button" onclick="setAmount(50)" class="amount-slab">₹50</button>
-                <button type="button" onclick="setAmount(100)" class="amount-slab">₹100</button>
-                <button type="button" onclick="setAmount(200)" class="amount-slab">₹200</button>
-                <button type="button" onclick="setAmount(500)" class="amount-slab">₹500</button>
-                <button type="button" onclick="setAmount(1000)" class="amount-slab">₹1000</button>
-                <button type="button" onclick="setAmount(2000)" class="amount-slab">₹2000</button>
-                <button type="button" onclick="setAmount(5000)" class="amount-slab">₹5000</button>
+                <button type="button" onclick="setAmount(10)" class="amount-slab">🪙 10</button>
+                <button type="button" onclick="setAmount(50)" class="amount-slab">🪙 50</button>
+                <button type="button" onclick="setAmount(100)" class="amount-slab">🪙 100</button>
+                <button type="button" onclick="setAmount(200)" class="amount-slab">🪙 200</button>
+                <button type="button" onclick="setAmount(500)" class="amount-slab">🪙 500</button>
+                <button type="button" onclick="setAmount(1000)" class="amount-slab">🪙 1000</button>
+                <button type="button" onclick="setAmount(2000)" class="amount-slab">🪙 2000</button>
+                <button type="button" onclick="setAmount(5000)" class="amount-slab">🪙 5000</button>
             </div>
 
             <!-- Custom Amount Input -->
@@ -1002,8 +1257,8 @@
                     <i class="fa-solid fa-info-circle" style="margin-top: 2px;"></i>
                     <span>
                         <strong>Amount Rules:</strong><br>
-                        1. Must be in multiples of 10 (₹10, ₹20, ₹30...)<br>
-                        2. Minimum: ₹10 · Maximum: ₹25,000<br>
+                        1. Must be in multiples of 10 (🪙10, 🪙20, 🪙30...)<br>
+                        2. Minimum: 🪙10 · Maximum: 🪙25,000<br>
                         3. Max 3 open challenges at a time
                     </span>
                 </p>
@@ -1036,7 +1291,7 @@
     </div>
 
     <!-- Ludo Result Submission Modal (for WIN/DISPUTE) -->
-    <div id="ludo-result-modal" class="modal-overlay hidden">
+    <div id="ludo-result-modal" class="modal-overlay hidden" style="z-index: 1000;">
         <div class="modal-content">
             <h3 id="ludo-result-modal-title">Submit Result</h3>
             <p class="text-muted" style="font-size: 0.9rem; margin-bottom: 1rem;" id="ludo-result-modal-desc">Upload
@@ -1072,27 +1327,84 @@
             <button class="btn btn-primary btn-block" style="margin-top: 1rem;"
                 onclick="confirmSubmitResult()">Submit</button>
             <button class="btn btn-outline btn-block" style="margin-top: 10px;"
-                onclick="closeModal('ludo-result-modal')">Cancel</button>
+                onclick="cancelResultAndReopen('ludo-result-modal')">Cancel</button>
         </div>
     </div>
 
 
-    <!-- Custom Confirm Lost Modal (replaces native confirm()) -->
-    <div id="confirm-lost-modal" class="modal-overlay hidden">
-        <div class="modal-content" style="text-align: center; max-width: 320px;">
-            <div style="font-size: 3rem; margin-bottom: 1rem;">😔</div>
-            <h3 style="color: var(--danger); margin-bottom: 0.5rem;">Confirm Loss</h3>
-            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem;">
-                You are confirming that you <strong>LOST</strong> this match.<br>
-                <span style="color: var(--danger);">Opponent will be declared the winner.</span>
+    <!-- Confirm Result Modal — Encouraging "GG" Design -->
+    <div id="confirm-lost-modal" class="modal-overlay hidden" style="z-index: 1000;">
+        <div class="modal-content" style="text-align: center; max-width: 340px;">
+            <div style="font-size: 2.8rem; margin-bottom: 0.75rem;">🎮</div>
+            <h3
+                style="background: linear-gradient(135deg, #818cf8, #6366f1); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.5rem; font-size: 1.2rem;">
+                Good Game!</h3>
+            <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 0.75rem; line-height: 1.5;">
+                Confirming the result as a <strong style="color: #818cf8;">loss</strong>.
+                Your opponent will be declared the winner.
             </p>
+            <div
+                style="background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(129,140,248,0.08)); border: 1px solid rgba(99,102,241,0.2); border-radius: 10px; padding: 10px; margin-bottom: 1.25rem;">
+                <div style="font-size: 0.8rem; color: #a5b4fc;">
+                    <i class="fa-solid fa-star" style="margin-right: 4px;"></i>
+                    Fair play earns you respect! Every great player has losses — comeback stronger next round 💪
+                </div>
+            </div>
             <input type="hidden" id="confirm-lost-match-id">
             <button class="btn btn-block" onclick="confirmLostSubmit()"
-                style="background: linear-gradient(135deg, #dc2626, #b91c1c); color: white; padding: 14px; margin-bottom: 10px;">
-                <i class="fa-solid fa-check"></i> Yes, I Lost
+                style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; padding: 14px; margin-bottom: 10px; border: none; font-weight: 600;">
+                <i class="fa-solid fa-handshake"></i> Confirm Result
             </button>
-            <button class="btn btn-outline btn-block" onclick="closeModal('confirm-lost-modal')" style="padding: 12px;">
-                Cancel
+            <button class="btn btn-outline btn-block" onclick="cancelResultAndReopen('confirm-lost-modal')"
+                style="padding: 12px; color: var(--text-muted);">
+                Go Back
+            </button>
+        </div>
+    </div>
+
+    <!-- Cancel Challenge Modal (Unilateral — OPEN/PAIRED) -->
+    <div id="confirm-cancel-modal" class="modal-overlay hidden" style="z-index: 1000;">
+        <div class="modal-content" style="text-align: center; max-width: 340px;">
+            <div style="font-size: 2.8rem; margin-bottom: 0.75rem;">🪙</div>
+            <h3 style="color: var(--text-main); margin-bottom: 0.5rem; font-size: 1.15rem;">Cancel Challenge?</h3>
+            <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1.25rem; line-height: 1.5;">
+                Your entry fee will be <strong style="color: #10b981;">fully refunded</strong> to your wallet.
+            </p>
+            <input type="hidden" id="confirm-cancel-match-id">
+            <button class="btn btn-block" onclick="confirmUnilateralCancel()"
+                style="background: linear-gradient(135deg, #ef4444, #dc2626); color: white; padding: 14px; margin-bottom: 10px; border: none; font-weight: 600;">
+                <i class="fa-solid fa-times-circle"></i> Cancel & Refund
+            </button>
+            <button class="btn btn-outline btn-block" onclick="cancelResultAndReopen('confirm-cancel-modal')"
+                style="padding: 12px; color: var(--text-muted);">
+                Keep Playing
+            </button>
+        </div>
+    </div>
+
+    <!-- Mutual Cancel Request Modal (ROOM_SHARED/IN_PROGRESS) -->
+    <div id="confirm-mutual-cancel-modal" class="modal-overlay hidden" style="z-index: 1000;">
+        <div class="modal-content" style="text-align: center; max-width: 340px;">
+            <div style="font-size: 2.8rem; margin-bottom: 0.75rem;">🤝</div>
+            <h3 style="color: var(--text-main); margin-bottom: 0.5rem; font-size: 1.15rem;">Request Mutual Cancel?</h3>
+            <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 0.75rem; line-height: 1.5;">
+                Your opponent must <strong style="color: #f59e0b;">also agree</strong> for this match to be cancelled.
+            </p>
+            <div
+                style="background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(251,191,36,0.08)); border: 1px solid rgba(245,158,11,0.2); border-radius: 10px; padding: 10px; margin-bottom: 1.25rem;">
+                <div style="font-size: 0.8rem; color: #fbbf24;">
+                    <i class="fa-solid fa-info-circle" style="margin-right: 4px;"></i>
+                    Both players receive a full refund once the opponent accepts.
+                </div>
+            </div>
+            <input type="hidden" id="confirm-mutual-cancel-match-id">
+            <button class="btn btn-block" onclick="confirmMutualCancelRequest()"
+                style="background: linear-gradient(135deg, #f59e0b, #d97706); color: white; padding: 14px; margin-bottom: 10px; border: none; font-weight: 600;">
+                <i class="fa-solid fa-paper-plane"></i> Send Cancel Request
+            </button>
+            <button class="btn btn-outline btn-block" onclick="cancelResultAndReopen('confirm-mutual-cancel-modal')"
+                style="padding: 12px; color: var(--text-muted);">
+                Continue Match
             </button>
         </div>
     </div>
@@ -1130,23 +1442,99 @@
         </div>
     </div>
 
-    <!-- Edit Profile Modal -->
-    <div id="edit-profile-modal" class="modal-overlay hidden">
+    <!-- Profile Details Modal (Read-Only) -->
+    <div id="profile-details-modal" class="modal-overlay hidden">
         <div class="modal-content">
             <div class="flex justify-between items-center mb-4">
-                <h3>Edit Profile</h3>
-                <button onclick="closeModal('edit-profile-modal')"
+                <h3 style="display: flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid fa-user-circle" style="color: #3b82f6;"></i> My Profile
+                </h3>
+                <button onclick="closeModal('profile-details-modal')"
                     style="background:none;border:none;font-size:1.5rem;color:#888;">&times;</button>
             </div>
-            <div class="form-group">
-                <label>Full Name</label>
-                <input type="text" id="edit-fullname" class="form-input" placeholder="Enter full name">
+
+            <!-- Profile Info Rows -->
+            <div
+                style="display: flex; flex-direction: column; gap: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden;">
+                <!-- Full Name -->
+                <div
+                    style="display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--bg-card);">
+                    <div
+                        style="width: 36px; height: 36px; border-radius: 8px; background: rgba(59,130,246,0.1); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                        <i class="fa-solid fa-user" style="color: #3b82f6; font-size: 0.85rem;"></i>
+                    </div>
+                    <div style="flex: 1; margin-left: 12px;">
+                        <div
+                            style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">
+                            Full Name</div>
+                        <div id="pd-fullname" style="font-weight: 600; font-size: 0.95rem; margin-top: 2px;">—</div>
+                    </div>
+                </div>
+                <!-- Email -->
+                <div
+                    style="display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--bg-card);">
+                    <div
+                        style="width: 36px; height: 36px; border-radius: 8px; background: rgba(16,185,129,0.1); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                        <i class="fa-solid fa-envelope" style="color: #10b981; font-size: 0.85rem;"></i>
+                    </div>
+                    <div style="flex: 1; margin-left: 12px;">
+                        <div
+                            style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">
+                            Email</div>
+                        <div id="pd-email"
+                            style="font-weight: 600; font-size: 0.95rem; margin-top: 2px; word-break: break-all;">—
+                        </div>
+                    </div>
+                </div>
+                <!-- Mobile Number -->
+                <div
+                    style="display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--bg-card);">
+                    <div
+                        style="width: 36px; height: 36px; border-radius: 8px; background: rgba(168,85,247,0.1); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                        <i class="fa-solid fa-phone" style="color: #a855f7; font-size: 0.85rem;"></i>
+                    </div>
+                    <div style="flex: 1; margin-left: 12px;">
+                        <div
+                            style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">
+                            Mobile Number</div>
+                        <div id="pd-mobile" style="font-weight: 600; font-size: 0.95rem; margin-top: 2px;">—</div>
+                    </div>
+                </div>
+                <!-- Joined Date -->
+                <div
+                    style="display: flex; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); background: var(--bg-card);">
+                    <div
+                        style="width: 36px; height: 36px; border-radius: 8px; background: rgba(251,191,36,0.1); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                        <i class="fa-solid fa-calendar" style="color: #fbbf24; font-size: 0.85rem;"></i>
+                    </div>
+                    <div style="flex: 1; margin-left: 12px;">
+                        <div
+                            style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">
+                            Member Since</div>
+                        <div id="pd-joined" style="font-weight: 600; font-size: 0.95rem; margin-top: 2px;">—</div>
+                    </div>
+                </div>
+                <!-- User ID -->
+                <div style="display: flex; align-items: center; padding: 14px 16px; background: var(--bg-card);">
+                    <div
+                        style="width: 36px; height: 36px; border-radius: 8px; background: rgba(156,163,175,0.1); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                        <i class="fa-solid fa-fingerprint" style="color: #9ca3af; font-size: 0.85rem;"></i>
+                    </div>
+                    <div style="flex: 1; margin-left: 12px;">
+                        <div
+                            style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">
+                            User ID</div>
+                        <div id="pd-uid"
+                            style="font-weight: 500; font-size: 0.75rem; margin-top: 2px; color: var(--text-muted); font-family: monospace; word-break: break-all;">
+                            —</div>
+                    </div>
+                </div>
             </div>
-            <div class="form-group">
-                <label>Mobile Number</label>
-                <input type="tel" id="edit-mobile" class="form-input" placeholder="Enter mobile number">
-            </div>
-            <button class="btn btn-primary btn-block" onclick="saveProfile()">Save Changes</button>
+
+            <p style="text-align: center; font-size: 0.75rem; color: var(--text-muted); margin-top: 16px;">
+                <i class="fa-solid fa-lock" style="font-size: 0.6rem;"></i>
+                Profile details are managed by the platform and cannot be edited
+            </p>
         </div>
     </div>
 
@@ -1189,16 +1577,16 @@
     <!-- Withdraw Modal -->
     <div id="withdraw-modal" class="modal-overlay hidden">
         <div class="modal-content">
-            <h3 style="margin-bottom: 1rem;"><i class="fa-solid fa-arrow-up text-success"></i> Withdraw Winnings</h3>
-            <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 0.5rem;">Only winning balance can be
-                withdrawn.</p>
+            <h3 style="margin-bottom: 1rem;"><i class="fa-solid fa-arrow-up text-success"></i> Withdraw Coins</h3>
+            <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 0.5rem;">Withdraw your winning coins to your
+                bank. <strong style="color: var(--primary);">1 Coin = ₹1</strong></p>
             <div
                 style="background: var(--bg-hover); padding: 10px; border-radius: 8px; margin-bottom: 1rem; text-align: center;">
                 <span style="font-size: 0.75rem; color: var(--text-muted);">Available Winnings</span>
-                <div id="withdraw-available" style="font-size: 1.3rem; font-weight: 700; color: var(--primary);">₹0
+                <div id="withdraw-available" style="font-size: 1.3rem; font-weight: 700; color: var(--primary);">🪙 0
                 </div>
             </div>
-            <input type="number" id="withdraw-amount" class="form-input" placeholder="Enter amount (₹)" min="10"
+            <input type="number" id="withdraw-amount" class="form-input" placeholder="Enter coins to withdraw" min="10"
                 step="10">
             <input type="text" id="withdraw-upi" class="form-input" placeholder="UPI ID (e.g. name@upi)"
                 style="margin-top: 10px;">
@@ -1243,11 +1631,12 @@
     <!-- Deposit Modal -->
     <div id="deposit-modal" class="modal-overlay hidden">
         <div class="modal-content">
-            <h3 style="margin-bottom: 1rem;"><i class="fa-solid fa-wallet text-primary"></i> Add Money</h3>
+            <h3 style="margin-bottom: 1rem;"><i class="fa-solid fa-wallet text-primary"></i> Buy Coins</h3>
 
             <!-- Step 1: Select Amount -->
             <div id="deposit-step-1">
-                <p class="text-muted" style="margin-bottom: 1rem;">Select amount to add:</p>
+                <p class="text-muted" style="margin-bottom: 1rem;">Select coins to buy: <span
+                        style="color: var(--primary); font-weight: 600; font-size: 0.8rem;">1 Coin = ₹1</span></p>
 
                 <!-- Hidden input to track selected amount -->
                 <input type="hidden" id="selected-deposit-amount" value="">
@@ -1260,8 +1649,8 @@
                 <!-- Selected Amount Display -->
                 <div id="selected-amount-display" class="hidden"
                     style="background: linear-gradient(135deg, rgba(0,255,136,0.1), rgba(0,255,136,0.05)); border: 1px solid var(--primary); border-radius: 12px; padding: 15px; margin-bottom: 1rem; text-align: center;">
-                    <span style="color: var(--text-muted); font-size: 0.85rem;">You're adding</span>
-                    <div style="font-size: 1.8rem; font-weight: 700; color: var(--primary);" id="display-amount">₹0
+                    <span style="color: var(--text-muted); font-size: 0.85rem;">You're buying</span>
+                    <div style="font-size: 1.8rem; font-weight: 700; color: var(--primary);" id="display-amount">🪙 0
                     </div>
                 </div>
 
@@ -1277,7 +1666,8 @@
                     <i class="fa-solid fa-qrcode"
                         style="font-size: 3rem; color: var(--primary); margin-bottom: 1rem;"></i>
                     <p style="font-size: 1.2rem; font-weight: 600; margin-bottom: 0.5rem;">Pay ₹<span
-                            id="pay-amount">0</span></p>
+                            id="pay-amount">0</span> <span style="font-size: 0.8rem; color: rgba(255,255,255,0.6);">(for
+                            🪙 <span id="pay-coins-amount">0</span> coins)</span></p>
                     <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1rem;">Transaction ID: <span
                             id="pay-txn-id">-</span></p>
 
@@ -1321,15 +1711,284 @@
         </div>
     </div>
 
+    <!-- ═══════════════ DAILY REWARD POPUP ═══════════════ -->
+    <div id="daily-reward-modal" class="hidden" style="
+        position: fixed; inset: 0; z-index: 9999;
+        background: rgba(0,0,0,0.85); backdrop-filter: blur(12px);
+        display: flex; align-items: center; justify-content: center;
+        padding: 20px; animation: fadeIn 0.3s ease;">
+
+        <div id="daily-reward-card" style="
+            background: linear-gradient(165deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%);
+            border-radius: 24px; width: 100%; max-width: 380px;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 25px 80px rgba(0,0,0,0.6), 0 0 60px rgba(168,85,247,0.15);
+            overflow: hidden; position: relative;
+            animation: slideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);">
+
+            <!-- Decorative glow -->
+            <div style="position:absolute; top:-60px; left:50%; transform:translateX(-50%);
+                width:200px; height:200px; border-radius:50%;
+                background:radial-gradient(circle, rgba(168,85,247,0.3) 0%, transparent 70%);
+                pointer-events:none;"></div>
+
+            <!-- Close button -->
+            <button onclick="closeDailyReward()" style="
+                position:absolute; top:14px; right:14px; z-index:10;
+                background:rgba(255,255,255,0.08); border:none; color:#fff;
+                width:32px; height:32px; border-radius:50%; cursor:pointer;
+                display:flex; align-items:center; justify-content:center;
+                font-size:0.9rem; transition:background 0.2s;"
+                onmouseover="this.style.background='rgba(255,255,255,0.15)'"
+                onmouseout="this.style.background='rgba(255,255,255,0.08)'">✕</button>
+
+            <!-- Header -->
+            <div style="text-align:center; padding:28px 24px 16px; position:relative;">
+                <div style="width:64px; height:64px; margin:0 auto 14px;
+                    background: linear-gradient(135deg, #a855f7, #ec4899);
+                    border-radius:18px; display:flex; align-items:center; justify-content:center;
+                    box-shadow: 0 8px 24px rgba(168,85,247,0.4);
+                    animation: pulse 2s infinite;">
+                    <i class="fa-solid fa-gift" style="font-size:28px; color:#fff;"></i>
+                </div>
+                <h3 style="margin:0; color:#fff; font-size:1.3rem; font-weight:800;
+                    letter-spacing:-0.5px;">Daily Rewards</h3>
+                <p style="margin:6px 0 0; color:rgba(255,255,255,0.5); font-size:0.8rem;">
+                    Login daily to earn bonus rewards!</p>
+            </div>
+
+            <!-- Streak days -->
+            <div id="daily-reward-days" style="
+                display:flex; justify-content:center; gap:8px;
+                padding:4px 20px 20px; flex-wrap:wrap;">
+                <!-- 7 day circles injected by JS -->
+            </div>
+
+            <!-- Claim section -->
+            <div style="padding:0 24px 24px; text-align:center;">
+                <div id="daily-reward-amount" style="
+                    font-size:2rem; font-weight:900; color:#a855f7;
+                    text-shadow: 0 0 30px rgba(168,85,247,0.5);
+                    margin-bottom:4px;">🪙 0</div>
+                <div id="daily-reward-day-label" style="
+                    color:rgba(255,255,255,0.5); font-size:0.78rem; margin-bottom:16px;">
+                    Day 1 Reward</div>
+
+                <button id="daily-reward-claim-btn" onclick="claimDailyRewardUI()" style="
+                    width:100%; padding:16px; border:none; border-radius:14px;
+                    background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+                    color:#fff; font-weight:800; font-size:1.05rem;
+                    cursor:pointer; position:relative; overflow:hidden;
+                    box-shadow: 0 8px 30px rgba(168,85,247,0.4);
+                    transition: transform 0.2s, box-shadow 0.2s;" onmousedown="this.style.transform='scale(0.97)'"
+                    onmouseup="this.style.transform='scale(1)'" ontouchstart="this.style.transform='scale(0.97)'"
+                    ontouchend="this.style.transform='scale(1)'">
+                    <i class="fa-solid fa-hand-sparkles"></i> Claim Reward
+                </button>
+
+                <div id="daily-reward-streak" style="
+                    margin-top:14px; color:rgba(255,255,255,0.35);
+                    font-size:0.72rem;">
+                    🔥 0 day streak</div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(40px) scale(0.95);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                box-shadow: 0 8px 24px rgba(168, 85, 247, 0.4);
+            }
+
+            50% {
+                box-shadow: 0 8px 36px rgba(168, 85, 247, 0.6), 0 0 20px rgba(236, 72, 153, 0.3);
+            }
+        }
+
+        @keyframes glowPulse {
+
+            0%,
+            100% {
+                box-shadow: 0 0 8px rgba(168, 85, 247, 0.5);
+            }
+
+            50% {
+                box-shadow: 0 0 20px rgba(168, 85, 247, 0.8), 0 0 40px rgba(236, 72, 153, 0.3);
+            }
+        }
+
+        @keyframes confetti {
+            0% {
+                transform: translateY(0) rotate(0);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translateY(-100px) rotate(720deg);
+                opacity: 0;
+            }
+        }
+
+        @keyframes spin-glow {
+            0% {
+                filter: hue-rotate(0deg) brightness(1);
+            }
+
+            50% {
+                filter: hue-rotate(30deg) brightness(1.15);
+            }
+
+            100% {
+                filter: hue-rotate(0deg) brightness(1);
+            }
+        }
+
+        .dr-day-circle {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.7rem;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .dr-day-claimed {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        }
+
+        .dr-day-today {
+            background: linear-gradient(135deg, #a855f7, #ec4899);
+            color: #fff;
+            animation: glowPulse 1.5s infinite;
+            transform: scale(1.15);
+        }
+
+        .dr-day-locked {
+            background: rgba(255, 255, 255, 0.05);
+            color: rgba(255, 255, 255, 0.25);
+            border: 1px dashed rgba(255, 255, 255, 0.1);
+        }
+
+        .dr-day-label {
+            font-size: 0.5rem;
+            opacity: 0.7;
+            margin-top: 1px;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+        }
+
+        .dr-day-amount {
+            font-size: 0.65rem;
+            font-weight: 800;
+        }
+
+        /* ─── Coin Economy Styles ─── */
+        .coin-icon {
+            width: 18px;
+            height: 18px;
+            vertical-align: middle;
+            margin-right: 2px;
+            display: inline-block;
+            position: relative;
+            top: -1px;
+        }
+
+        .coin-amount {
+            vertical-align: middle;
+        }
+
+        .chip .coin-icon {
+            width: 15px;
+            height: 15px;
+        }
+
+        /* Small contexts */
+        .text-muted .coin-icon,
+        .lb-rank-winnings .coin-icon,
+        .lb-podium-wins .coin-icon {
+            width: 14px;
+            height: 14px;
+        }
+
+        /* ─── VIP Badge ─── */
+        .vip-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            background: linear-gradient(135deg, #f59e0b, #facc15, #f59e0b);
+            background-size: 200% 100%;
+            color: #1a1500;
+            font-size: 0.6rem;
+            font-weight: 800;
+            padding: 2px 6px;
+            border-radius: 4px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            white-space: nowrap;
+            animation: vip-shimmer 3s ease infinite;
+            box-shadow: 0 1px 4px rgba(250, 204, 21, 0.35);
+            vertical-align: middle;
+            margin-left: 4px;
+        }
+
+        .vip-badge-sm {
+            font-size: 0.5rem;
+            padding: 1px 4px;
+            gap: 2px;
+        }
+
+        @keyframes vip-shimmer {
+            0% {
+                background-position: 200% 0;
+            }
+
+            100% {
+                background-position: -200% 0;
+            }
+        }
+    </style>
+
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-messaging-compat.js"></script>
 
     <!-- App Modules (order matters) -->
-    <script src="js/firebase-init.js?v=1"></script>
+    <script src="js/firebase-init.js?v=2"></script>
     <script src="js/utils.js?v=1"></script>
     <script src="js/auth.js?v=1"></script>
     <script src="js/home.js?v=1"></script>
@@ -1337,8 +1996,14 @@
     <script src="js/wallet.js?v=2"></script>
     <script src="js/profile.js?v=1"></script>
     <script src="js/esports.js?v=1"></script>
-    <script src="js/ludo.js?v=1"></script>
+    <script src="js/tournament.js?v=2"></script>
+    <script src="js/ludo.js?v=2"></script>
     <script src="js/deposit.js?v=1"></script>
+    <script src="js/daily_rewards.js?v=1"></script>
+    <script src="js/spin_wheel.js?v=1"></script>
+    <script src="js/vip.js?v=1"></script>
+    <script src="js/smart_notifications.js?v=1"></script>
+    <script src="js/onboarding.js?v=1"></script>
 
 </body>
 

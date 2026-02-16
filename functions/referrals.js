@@ -6,34 +6,41 @@
 
 const {
     functions, admin, db,
-    assertAuth, sendPush
+    onCall, HttpsError,
+    assertAuth, sendPush, checkRateLimit, assertNotBanned, logEvent
 } = require('./helpers');
 
 // ─── Process Referral Reward ────────────────────────────────
 
-exports.processReferralReward = functions.https.onCall(async (data, context) => {
-    const uid = assertAuth(context);
-    const { referrerUid, deviceFingerprint } = data;
+exports.processReferralReward = onCall(async (request) => {
+    const uid = assertAuth(request);
+    const { referrerUid, deviceFingerprint } = request.data;
 
-    if (!referrerUid) throw new functions.https.HttpsError('invalid-argument', 'referrerUid required');
-    if (referrerUid === uid) throw new functions.https.HttpsError('invalid-argument', 'Cannot refer yourself');
+    // ── Rate limit: max 5 referral attempts per hour ──
+    await checkRateLimit(uid, 'referral', 5, 60 * 60 * 1000);
+
+    // ── Server-side ban enforcement ──
+    await assertNotBanned(uid);
+
+    if (!referrerUid) throw new HttpsError('invalid-argument', 'referrerUid required');
+    if (referrerUid === uid) throw new HttpsError('invalid-argument', 'Cannot refer yourself');
 
     // ── Duplicate check: already processed this referral?
     const existingRef = await db.ref(`referrals/${referrerUid}/${uid}`).once('value');
     if (existingRef.exists()) {
-        throw new functions.https.HttpsError('already-exists', 'Referral already processed');
+        throw new HttpsError('already-exists', 'Referral already processed');
     }
 
     // ── Verify referrer user exists
     const referrerSnap = await db.ref('users/' + referrerUid).once('value');
-    if (!referrerSnap.exists()) throw new functions.https.HttpsError('not-found', 'Referrer not found');
+    if (!referrerSnap.exists()) throw new HttpsError('not-found', 'Referrer not found');
 
     // ── Device fingerprint check: block same-device abuse
     if (deviceFingerprint) {
         const referrerData = referrerSnap.val();
         if (referrerData.deviceFingerprint && referrerData.deviceFingerprint === deviceFingerprint) {
             functions.logger.warn(`[processReferralReward] Same device fingerprint detected: referrer=${referrerUid}, referee=${uid}`);
-            throw new functions.https.HttpsError('permission-denied', 'Referral blocked: same device detected');
+            throw new HttpsError('permission-denied', 'Referral blocked: same device detected');
         }
     }
 
@@ -49,7 +56,7 @@ exports.processReferralReward = functions.https.onCall(async (data, context) => 
     const stats = statsSnap.val() || {};
 
     if (stats.lastResetDate === today && (stats.dailyCount || 0) >= dailyCap) {
-        throw new functions.https.HttpsError('resource-exhausted', `Daily referral limit (${dailyCap}) reached. Try again tomorrow.`);
+        throw new HttpsError('resource-exhausted', `Daily referral limit (${dailyCap}) reached. Try again tomorrow.`);
     }
 
     // ── Save PENDING referral (NOT credited yet)
@@ -79,7 +86,7 @@ exports.processReferralReward = functions.https.onCall(async (data, context) => 
 
     // Notify referrer about pending referral
     await sendPush(referrerUid, `🎊 New Referral Registered!`,
-        `Your friend just joined JeetoPlay! You'll earn ₹${rewardAmount} once they complete ${requiredGames} games. Keep sharing!`,
+        `Your friend just joined JeetoPlay! You'll earn 🪙 ${rewardAmount} once they complete ${requiredGames} games. Keep sharing!`,
         { type: 'REFERRAL_PENDING', amount: String(rewardAmount) });
 
     return { success: true, rewardAmount, status: 'PENDING', requiredGames };

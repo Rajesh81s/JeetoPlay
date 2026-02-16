@@ -6,17 +6,18 @@
 
 const {
     functions, admin, db,
-    assertAuth, assertAdmin, sendPush
+    onCall, HttpsError,
+    assertAuth, assertAdmin, sendPush, logEvent
 } = require('./helpers');
 
 // ─── Send Admin Notification (FCM Topics for broadcasts) ────
 
-exports.sendAdminNotification = functions.https.onCall(async (data, context) => {
-    await assertAdmin(context);
+exports.sendAdminNotification = onCall(async (request) => {
+    await assertAdmin(request);
 
-    const { title, body, imageUrl, recipientUids } = data;
+    const { title, body, imageUrl, recipientUids } = request.data;
     if (!title || !body) {
-        throw new functions.https.HttpsError('invalid-argument', 'title and body are required');
+        throw new HttpsError('invalid-argument', 'title and body are required');
     }
 
     const timestamp = admin.database.ServerValue.TIMESTAMP;
@@ -135,20 +136,20 @@ exports.sendAdminNotification = functions.https.onCall(async (data, context) => 
 
 // ─── Subscribe FCM Token to Topic ───────────────────────────
 
-exports.subscribeToTopic = functions.https.onCall(async (data, context) => {
-    assertAuth(context); // Any authenticated user can subscribe
+exports.subscribeToTopic = onCall(async (request) => {
+    assertAuth(request); // Any authenticated user can subscribe
 
-    const { token, topic } = data;
+    const { token, topic } = request.data;
     if (!token || !topic) {
-        throw new functions.https.HttpsError('invalid-argument', 'token and topic are required');
+        throw new HttpsError('invalid-argument', 'token and topic are required');
     }
 
     // Whitelist allowed topics to prevent abuse
     // Allow: 'all_users' + 'user_{own_uid}' (personal topic for targeted notifications)
-    const uid = context.auth.uid;
+    const uid = request.auth.uid;
     const allowedTopics = ['all_users', `user_${uid}`];
     if (!allowedTopics.includes(topic)) {
-        throw new functions.https.HttpsError('invalid-argument', 'Invalid topic');
+        throw new HttpsError('invalid-argument', 'Invalid topic');
     }
 
     try {
@@ -157,23 +158,23 @@ exports.subscribeToTopic = functions.https.onCall(async (data, context) => {
         return { success: true, successCount: response.successCount };
     } catch (err) {
         functions.logger.error(`[subscribeToTopic] Failed:`, err.message);
-        throw new functions.https.HttpsError('internal', 'Failed to subscribe to topic');
+        throw new HttpsError('internal', 'Failed to subscribe to topic');
     }
 });
 
 // ─── Send eSports Match Notifications ───────────────────────
 
-exports.sendEsportsNotification = functions.https.onCall(async (data, context) => {
-    await assertAdmin(context);
+exports.sendEsportsNotification = onCall(async (request) => {
+    await assertAdmin(request);
 
-    const { matchId, notifType } = data;
+    const { matchId, notifType } = request.data;
     if (!matchId || !notifType) {
-        throw new functions.https.HttpsError('invalid-argument', 'matchId and notifType required');
+        throw new HttpsError('invalid-argument', 'matchId and notifType required');
     }
 
     const matchSnap = await db.ref('esports_matches/' + matchId).once('value');
     const match = matchSnap.val();
-    if (!match) throw new functions.https.HttpsError('not-found', 'Match not found');
+    if (!match) throw new HttpsError('not-found', 'Match not found');
 
     // Get all participant UIDs
     const participantIds = [];
@@ -202,7 +203,7 @@ exports.sendEsportsNotification = functions.https.onCall(async (data, context) =
         body = `Results for your match have been declared! Check your winnings now.`;
         extraData = { type: 'ESPORTS_RESULTS', matchId };
     } else {
-        throw new functions.https.HttpsError('invalid-argument', 'Unknown notifType');
+        throw new HttpsError('invalid-argument', 'Unknown notifType');
     }
 
     // Save to user_notifications
@@ -240,13 +241,13 @@ exports.sendEsportsNotification = functions.https.onCall(async (data, context) =
 
 // ─── eSports Prize Push (callable from admin results page) ──
 
-exports.sendEsportsPrizePush = functions.https.onCall(async (data, context) => {
-    await assertAdmin(context);
+exports.sendEsportsPrizePush = onCall(async (request) => {
+    await assertAdmin(request);
 
-    const { matchId, winners } = data;
+    const { matchId, winners } = request.data;
     // winners = [{ uid, prize, rank }]
     if (!matchId || !Array.isArray(winners)) {
-        throw new functions.https.HttpsError('invalid-argument', 'matchId and winners array required');
+        throw new HttpsError('invalid-argument', 'matchId and winners array required');
     }
 
     const matchSnap = await db.ref('esports_matches/' + matchId).once('value');
@@ -258,8 +259,8 @@ exports.sendEsportsPrizePush = functions.https.onCall(async (data, context) => {
         if (!w.uid || !w.prize) return;
         try {
             const shortIdEP = matchId.slice(-6).toUpperCase();
-            await sendPush(w.uid, `🏆 ₹${w.prize} Prize Won — ${gameName} #${shortIdEP}!`,
-                `Congratulations! You finished #${w.rank || '?'} in ${gameName} (Match #${shortIdEP}) and earned ₹${w.prize}! Winnings credited to your wallet.`,
+            await sendPush(w.uid, `🏆 🪙 ${w.prize} Prize Won — ${gameName} #${shortIdEP}!`,
+                `Congratulations! You finished #${w.rank || '?'} in ${gameName} (Match #${shortIdEP}) and earned 🪙 ${w.prize}! Winnings credited to your wallet.`,
                 { type: 'ESPORTS_PRIZE', matchId, prize: String(w.prize) });
             // In-app notification is auto-saved by sendPush
             sent++;
@@ -274,15 +275,15 @@ exports.sendEsportsPrizePush = functions.https.onCall(async (data, context) => {
 
 // ─── eSports Room Credentials Push ──────────────────────────
 
-exports.sendEsportsRoomCredsPush = functions.https.onCall(async (data, context) => {
-    await assertAdmin(context);
+exports.sendEsportsRoomCredsPush = onCall(async (request) => {
+    await assertAdmin(request);
 
-    const { matchId, roomId, roomPassword } = data;
-    if (!matchId) throw new functions.https.HttpsError('invalid-argument', 'matchId required');
+    const { matchId, roomId, roomPassword } = request.data;
+    if (!matchId) throw new HttpsError('invalid-argument', 'matchId required');
 
     const matchSnap = await db.ref('esports_matches/' + matchId).once('value');
     const match = matchSnap.val();
-    if (!match) throw new functions.https.HttpsError('not-found', 'Match not found');
+    if (!match) throw new HttpsError('not-found', 'Match not found');
 
     const gameName = match.gameName || match.title || 'eSports Match';
     const shortId = matchId.slice(-6).toUpperCase();

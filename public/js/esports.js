@@ -1,6 +1,12 @@
 // JeetoPlay — eSports
 // Auto-extracted from app.html
 
+// XSS sanitization for user-controlled values (IGN names, titles, etc.)
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
 function loadEsportsGames() {
     db.ref('esports_games').on('value', snap => {
         const grid = document.getElementById('esports-games-grid');
@@ -120,10 +126,43 @@ function loadMatchesList() {
 
             const el = document.createElement('div');
             el.className = 'match-card';
+            el.style.cursor = 'pointer';
+            el.onclick = () => viewMatchDetails(match.id);
+
+            // Mini status indicator at the bottom
+            let statusIndicator = '';
+            if (match.status === 'UPCOMING') {
+                if (hasJoined) {
+                    statusIndicator = `<div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
+                        <span style="font-size:0.78rem; color:#00ff88; font-weight:600;"><i class="fa-solid fa-circle-check"></i> Joined</span>
+                        <span style="font-size:0.75rem; color:var(--text-muted);">Tap for details →</span>
+                    </div>`;
+                } else if (isFull) {
+                    statusIndicator = `<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border); text-align:center;">
+                        <span style="font-size:0.78rem; color:var(--danger); font-weight:600;">FULL</span>
+                    </div>`;
+                } else {
+                    statusIndicator = `<div style="margin-top:12px;">
+                        <div style="background:linear-gradient(135deg, #00ff88, #00cc6a); padding:12px 16px; border-radius:10px; text-align:center; cursor:pointer; box-shadow:0 4px 15px rgba(0,255,136,0.25);">
+                            <span style="font-size:0.9rem; color:#000; font-weight:700; letter-spacing:0.3px;"><i class="fa-solid fa-bolt"></i> Join Now — 🪙 ${match.entryFee}</span>
+                        </div>
+                    </div>`;
+                }
+            } else if (match.status === 'LIVE') {
+                statusIndicator = `<div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
+                    <span style="font-size:0.78rem; color:#ff9500; font-weight:600;"><i class="fa-solid fa-broadcast-tower"></i> LIVE NOW</span>
+                    ${hasJoined ? '<span style="font-size:0.75rem; color:var(--text-muted);">Tap for room details →</span>' : ''}
+                </div>`;
+            } else if (match.status === 'COMPLETED') {
+                statusIndicator = `<div style="margin-top:10px; padding:10px; background:linear-gradient(135deg, rgba(99,102,241,0.12), rgba(139,92,246,0.08)); border-radius:8px; text-align:center; border:1px solid rgba(99,102,241,0.2);">
+                    <span style="font-size:0.85rem; color:#8b5cf6; font-weight:700;"><i class="fa-solid fa-trophy"></i> View Results</span>
+                </div>`;
+            }
+
             el.innerHTML = `
                  <div class="match-header">
                     <span>#${match.matchId || match.id.slice(-10)}</span>
-                    <span class="text-${match.status === 'LIVE' ? 'danger' : 'success'}">${match.status}</span>
+                    <span class="text-${match.status === 'LIVE' ? 'danger' : match.status === 'COMPLETED' ? 'primary' : 'success'}">${match.status}</span>
                 </div>
                 <div class="match-title">${match.title}</div>
                 <div class="text-muted" style="font-size:0.8rem; margin-bottom:10px;">
@@ -144,15 +183,15 @@ function loadMatchesList() {
                 <div class="match-details">
                     <div class="detail-item">
                         <span class="detail-label">PRIZE POOL</span>
-                        <span class="text-success" style="font-weight:700">₹${match.prizePool}</span>
+                        <span class="text-success" style="font-weight:700">🪙 ${match.prizePool}</span>
                     </div>
                     <div class="detail-item">
                         <span class="detail-label">PER KILL</span>
-                        <span style="font-weight:700">₹${match.perKill}</span>
+                        <span style="font-weight:700">🪙 ${match.perKill}</span>
                     </div>
                     <div class="detail-item">
                         <span class="detail-label">ENTRY FEE</span>
-                        <span style="font-weight:700">₹${match.entryFee}</span>
+                        <span style="font-weight:700">🪙 ${match.entryFee}</span>
                     </div>
                     <div class="detail-item">
                         <span class="detail-label">TYPE</span>
@@ -160,46 +199,7 @@ function loadMatchesList() {
                     </div>
                 </div>
 
-                ${match.status === 'UPCOMING' ?
-                    (hasJoined ?
-                        `<button class="btn btn-outline btn-block" disabled>✓ Joined</button>
-                         <div style="margin-top:10px; background:var(--bg-hover); padding:10px; border-radius:8px; text-align:center;">
-                            <i class="fa-solid fa-lock" style="color:var(--text-muted);"></i>
-                            <span class="text-muted" style="font-size:0.85rem;"> Room details available when LIVE</span>
-                         </div>
-                         <button class="btn btn-outline btn-sm" style="margin-top:8px; width:100%;" onclick="viewParticipants('${match.id}')">
-                            <i class="fa-solid fa-users"></i> View Players (${joinedCount})
-                         </button>` :
-                        (isFull ?
-                            `<button class="btn btn-outline btn-block" disabled style="opacity:0.5;">FULL</button>` :
-                            `<button class="btn btn-primary btn-block" onclick="openJoinModal('${match.id}', ${match.entryFee})">Join Now</button>`
-                        )
-                    )
-                    : ''}
-
-                ${hasJoined && match.status === 'LIVE' && match.roomId ?
-                    `<div style="margin-top:10px; background: linear-gradient(135deg, #1a472a 0%, #2d5a3d 100%); padding:12px; border-radius:8px; border: 1px solid var(--primary);">
-                        <div style="font-size:0.75rem; color:var(--primary); margin-bottom:4px;">🎮 ROOM DETAILS</div>
-                        <div style="font-family:monospace; font-size:0.95rem;">
-                            ID: <span style="color:var(--primary); font-weight:700;">${match.roomId}</span>
-                        </div>
-                        <div style="font-family:monospace; font-size:0.95rem;">
-                            Pass: <span style="color:var(--primary); font-weight:700;">${match.roomPassword || match.roomPass}</span>
-                        </div>
-                    </div>
-                    <button class="btn btn-outline btn-sm" style="margin-top:8px; width:100%;" onclick="viewParticipants('${match.id}')">
-                        <i class="fa-solid fa-users"></i> View Players (${joinedCount})
-                    </button>`
-                    : ''}
-                
-                ${match.status === 'COMPLETED' ?
-                    `<button class="btn btn-primary btn-block" style="margin-top:10px;" onclick="viewMatchResults('${match.id}')">
-                        <i class="fa-solid fa-trophy"></i> View Results
-                    </button>
-                    <button class="btn btn-outline btn-sm" style="margin-top:8px; width:100%;" onclick="viewParticipants('${match.id}')">
-                        <i class="fa-solid fa-users"></i> View Players (${joinedCount})
-                    </button>`
-                    : ''}
+                ${statusIndicator}
             `;
             list.appendChild(el);
         });
@@ -224,11 +224,25 @@ window.viewParticipants = async function (matchId) {
             return;
         }
 
+        // Batch-fetch VIP flags for all participant UIDs
+        const vipMap = {};
+        const entries = [];
+        pSnap.forEach(child => { entries.push({ key: child.key, val: child.val() }); });
+        const uids = entries.map(e => e.val.bookedBy || e.key).filter(Boolean);
+        const uniqueUids = [...new Set(uids)];
+        await Promise.all(uniqueUids.map(async uid => {
+            try {
+                const s = await db.ref(`users/${uid}/isVip`).once('value');
+                vipMap[uid] = s.val() === true;
+            } catch (e) { /* ignore */ }
+        }));
+
         listEl.innerHTML = '';
         let count = 0;
-        pSnap.forEach(child => {
+        entries.forEach(({ key, val: p }) => {
             count++;
-            const p = child.val();
+            const pUid = p.bookedBy || key;
+            const vipBadge = vipMap[pUid] && typeof getVipBadgeHtml === 'function' ? getVipBadgeHtml(true) : '';
             const item = document.createElement('div');
             item.style.padding = '10px 15px';
             item.style.borderBottom = '1px solid var(--border)';
@@ -240,7 +254,7 @@ window.viewParticipants = async function (matchId) {
                     ${count}
                 </div>
                 <div style="font-weight:600; color:var(--text-main);">
-                    ${p.ign || 'Player ' + count}
+                    ${p.ign || 'Player ' + count} ${vipBadge}
                 </div>
             `;
             listEl.appendChild(item);
@@ -346,7 +360,7 @@ window.viewRoomDetails = async function (matchId) {
     }
 };
 
-// View Match Results - Shows winners and rewards
+// View Match Results - Enhanced results with match info and position rewards
 window.viewMatchResults = async function (matchId) {
     try {
         const matchSnap = await db.ref('esports_matches/' + matchId).once('value');
@@ -361,15 +375,14 @@ window.viewMatchResults = async function (matchId) {
         const participants = match.participants || {};
         const results = match.results || {};
         const participantList = Object.entries(participants);
+        const uid = state.user?.uid;
 
         // Calculate total distributed - handle both solo and team formats
         let totalDistributed = 0;
-        // Check both 'type' (DB field) and 'matchType' (legacy) for compatibility
         const matchType = (match.type || match.matchType || 'solo').toLowerCase();
         const isTeamMode = matchType.includes('duo') || matchType.includes('squad');
 
         if (isTeamMode) {
-            // Team mode: sum up creditedAmount from all bookers in all teams
             Object.values(results).forEach(teamResult => {
                 if (teamResult.bookerBreakdown) {
                     Object.values(teamResult.bookerBreakdown).forEach(booker => {
@@ -378,51 +391,69 @@ window.viewMatchResults = async function (matchId) {
                 }
             });
         } else {
-            // Solo mode: direct reward per participant
             Object.values(results).forEach(r => {
                 totalDistributed += (r.reward || 0);
             });
         }
 
+        // Position rewards setup
+        const posRewards = match.positionRewards || {};
+        const medalMap = { '1': '🥇', '2': '🥈', '3': '🥉' };
+        const ordMap = { '1': '1st', '2': '2nd', '3': '3rd' };
+        for (let p = 4; p <= 20; p++) ordMap[String(p)] = p + 'th';
+
+        let posRewardsHTML = '';
+        const prizeEntries = Object.entries(posRewards).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
+        if (prizeEntries.length > 0) {
+            posRewardsHTML = `
+                <div style="padding:12px 16px; border-bottom:1px solid var(--border);">
+                    <div style="font-size:0.75rem; color:var(--primary); margin-bottom:8px; font-weight:600;">🏆 POSITION PRIZES</div>
+                    <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                        ${prizeEntries.map(([place, amount]) => `
+                            <div style="flex:1; min-width:70px; text-align:center; padding:8px 4px; background:var(--bg-hover); border-radius:8px;">
+                                <div style="font-size:0.85rem;">${medalMap[place] || '🏅'}</div>
+                                <div style="font-size:0.7rem; color:var(--text-muted);">${ordMap[place] || place + 'th'}</div>
+                                <div style="font-weight:700; color:#00ff88; font-size:0.85rem;">🪙 ${amount}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
         // Build participants HTML with rewards
         let playersHtml = '';
-
-        // Process participants differently for solo vs team
         let displayData = [];
 
         if (isTeamMode) {
-            // Team mode: extract team number from slot key and lookup from team result
             participantList.forEach(([slotKey, p]) => {
-                // Extract team number: team_1_A → 1
                 const teamMatch = slotKey.match(/team_(\d+)/);
                 const teamNum = teamMatch ? teamMatch[1] : null;
                 const teamResultKey = teamNum ? `team_${teamNum}` : null;
                 const teamResult = teamResultKey ? (results[teamResultKey] || {}) : {};
 
-                // Find player-specific data from playerResults
                 const playerData = (teamResult.playerResults || []).find(pr => pr.slotKey === slotKey) || {};
                 const kills = playerData.kills ?? '-';
 
-                // Get reward from bookerBreakdown using bookedBy UID
                 const bookerUid = p.bookedBy || slotKey;
                 const bookerData = teamResult.bookerBreakdown?.[bookerUid] || {};
                 const reward = bookerData.creditedAmount || 0;
 
                 const position = teamResult.position || '-';
 
-                displayData.push({ slotKey, p, kills, reward, position, teamNum });
+                displayData.push({ slotKey, p, kills, reward, position, teamNum, bookerUid });
             });
         } else {
-            // Solo mode: direct lookup
-            participantList.forEach(([uid, p]) => {
-                const result = results[uid] || {};
+            participantList.forEach(([participantUid, p]) => {
+                const result = results[participantUid] || {};
                 displayData.push({
-                    slotKey: uid,
+                    slotKey: participantUid,
                     p,
                     kills: result.kills ?? '-',
                     reward: result.reward || 0,
                     position: result.position || '-',
-                    teamNum: null
+                    teamNum: null,
+                    bookerUid: participantUid
                 });
             });
         }
@@ -435,54 +466,114 @@ window.viewMatchResults = async function (matchId) {
             return (b.reward || 0) - (a.reward || 0);
         });
 
-        displayData.forEach(({ p, kills, reward, position, teamNum }, index) => {
+        // Find current user's result
+        let myResult = null;
+        displayData.forEach(d => {
+            if (d.slotKey === uid || d.bookerUid === uid) {
+                myResult = d;
+            }
+        });
+
+        // Batch-fetch VIP flags for results
+        const _rVipMap = {};
+        const _rUids = displayData.map(d => d.bookerUid || d.slotKey).filter(Boolean);
+        const _rUniqueUids = [...new Set(_rUids)];
+        await Promise.all(_rUniqueUids.map(async rUid => {
+            try { const s = await db.ref(`users/${rUid}/isVip`).once('value'); _rVipMap[rUid] = s.val() === true; } catch (e) { }
+        }));
+
+        displayData.forEach(({ slotKey, p, kills, reward, position, teamNum, bookerUid }, index) => {
+            const isMe = slotKey === uid || bookerUid === uid;
+            const posNum = position !== '-' ? parseInt(position) : null;
+            const isWinner = reward > 0;
+            const isTop3 = posNum && posNum <= 3;
+            const rVipBadge = _rVipMap[bookerUid || slotKey] && typeof getVipBadgeHtml === 'function' ? getVipBadgeHtml(true) : '';
+
             playersHtml += `
-                <div style="display:flex; align-items:center; gap:12px; padding:12px; border-bottom:1px solid var(--border); ${reward > 0 ? 'background:rgba(0,255,136,0.05);' : ''}">
-                    <div style="width:32px; height:32px; background:${reward > 0 ? 'linear-gradient(135deg, #00ff88, #00cc6a)' : 'var(--bg-hover)'}; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; color:${reward > 0 ? '#000' : 'var(--text-muted)'};">
-                        ${position !== '-' ? position : index + 1}
+                <div style="display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--border); ${isMe ? 'background:rgba(99,102,241,0.12); border-left:3px solid #6366f1;' : isWinner ? 'background:rgba(0,255,136,0.05);' : ''}">
+                    <div style="width:34px; height:34px; background:${isTop3 ? 'linear-gradient(135deg, #ffd700, #ff8c00)' : isWinner ? 'linear-gradient(135deg, #00ff88, #00cc6a)' : 'var(--bg-hover)'}; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:${isTop3 ? '1rem' : '0.85rem'}; color:${isTop3 || isWinner ? '#000' : 'var(--text-muted)'}; flex-shrink:0;">
+                        ${isTop3 ? (medalMap[String(posNum)] || posNum) : (position !== '-' ? position : index + 1)}
                     </div>
-                    <div style="flex:1;">
-                        <div style="font-weight:600;">${p.ign || 'Player'}${teamNum ? ` <span style="font-size:0.7rem; color:var(--text-muted);">(Team ${teamNum})</span>` : ''}</div>
-                        ${kills !== '-' ? `<div style="font-size:0.75rem; color:var(--text-muted);">${kills} kills</div>` : ''}
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-weight:600; font-size:0.9rem; ${isMe ? 'color:#6366f1;' : ''}">${escapeHtml(p.ign) || 'Player'} ${rVipBadge}${isMe ? ' <span style="font-size:0.65rem; padding:1px 6px; background:rgba(99,102,241,0.2); border-radius:10px; color:#818cf8;">YOU</span>' : ''}${teamNum ? ` <span style="font-size:0.65rem; color:var(--text-muted);">(Team ${teamNum})</span>` : ''}</div>
+                        <div style="display:flex; gap:10px; margin-top:2px;">
+                            ${kills !== '-' ? `<span style="font-size:0.73rem; color:var(--text-muted);"><i class="fa-solid fa-crosshairs"></i> ${kills} kills</span>` : ''}
+                            ${posNum ? `<span style="font-size:0.73rem; color:var(--text-muted);"><i class="fa-solid fa-ranking-star"></i> #${posNum}</span>` : ''}
+                        </div>
                     </div>
-                    ${reward > 0 ? `<div style="color:var(--primary); font-weight:700;">+₹${reward}</div>` : '<div style="color:var(--text-muted); font-size:0.85rem;">-</div>'}
+                    ${reward > 0 ? `<div style="color:#00ff88; font-weight:700; font-size:0.95rem; flex-shrink:0;">+🪙 ${reward}</div>` : '<div style="color:var(--text-muted); font-size:0.85rem; flex-shrink:0;">-</div>'}
                 </div>
             `;
         });
 
+        // Current user's result summary
+        let myResultHTML = '';
+        if (myResult) {
+            myResultHTML = `
+                <div style="padding:12px 16px; background:linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.1)); border-bottom:1px solid var(--border);">
+                    <div style="font-size:0.75rem; color:#818cf8; font-weight:600; margin-bottom:6px;">YOUR RESULT</div>
+                    <div style="display:flex; justify-content:space-around; text-align:center;">
+                        <div>
+                            <div style="font-size:0.68rem; color:var(--text-muted);">POSITION</div>
+                            <div style="font-weight:700; font-size:1.1rem;">${myResult.position !== '-' ? '#' + myResult.position : '-'}</div>
+                        </div>
+                        <div>
+                            <div style="font-size:0.68rem; color:var(--text-muted);">KILLS</div>
+                            <div style="font-weight:700; font-size:1.1rem;">${myResult.kills !== '-' ? myResult.kills : '-'}</div>
+                        </div>
+                        <div>
+                            <div style="font-size:0.68rem; color:var(--text-muted);">EARNED</div>
+                            <div style="font-weight:700; font-size:1.1rem; color:${myResult.reward > 0 ? '#00ff88' : 'var(--text-muted)'};"> ${myResult.reward > 0 ? '+🪙 ' + myResult.reward : '🪙 0'}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         // Show results modal
         const modalHtml = `
-            <div id="match-results-modal" style="position:fixed; inset:0; background:rgba(0,0,0,0.9); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px;">
-                <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius:16px; max-width:380px; width:100%; max-height:80vh; overflow:hidden; display:flex; flex-direction:column; border: 2px solid var(--success);">
+            <div id="match-results-modal" style="position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:1000; display:flex; align-items:center; justify-content:center; padding:16px;">
+                <div style="background: linear-gradient(145deg, #0f1923 0%, #151f2e 50%, #0d1520 100%); border-radius:20px; max-width:420px; width:100%; max-height:88vh; overflow:hidden; display:flex; flex-direction:column; border: 1.5px solid #6366f1; box-shadow: 0 0 60px rgba(0,0,0,0.5), 0 0 20px rgba(99,102,241,0.2);">
+                    <!-- Header -->
                     <div style="padding:20px; text-align:center; border-bottom:1px solid var(--border);">
                         <div style="width:50px; height:50px; background:linear-gradient(135deg, #ffd700, #ff8c00); border-radius:50%; display:flex; align-items:center; justify-content:center; margin:0 auto 10px;">
                             <i class="fa-solid fa-trophy" style="font-size:24px; color:#000;"></i>
                         </div>
-                        <h3 style="margin:0; color:var(--success);">🏆 MATCH RESULTS</h3>
-                        <div style="color:var(--text-muted); font-size:0.85rem; margin-top:4px;">${match.title || 'Match'}</div>
+                        <h3 style="margin:0 0 4px; color:#fff; font-size:1.1rem;">${match.title || 'Match Results'}</h3>
+                        <div style="color:var(--text-muted); font-size:0.82rem;">${match.gameName || 'Game'} • ${(match.type || 'Solo')} • ${match.map || 'Map'}</div>
+                        <div style="color:var(--text-muted); font-size:0.75rem; margin-top:4px;">${new Date(match.dateTime || match.time).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
                     </div>
                     
-                    <div style="padding:12px 20px; background:rgba(0,255,136,0.1); display:flex; justify-content:space-around; text-align:center;">
-                        <div>
-                            <div style="font-size:0.75rem; color:var(--text-muted);">PRIZE POOL</div>
-                            <div style="font-weight:700; color:var(--success);">₹${match.prizePool || 0}</div>
+                    <!-- Stats -->
+                    <div style="padding:12px 16px; display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; border-bottom:1px solid var(--border);">
+                        <div style="text-align:center;">
+                            <div style="font-size:0.65rem; color:var(--text-muted);">POOL</div>
+                            <div style="font-weight:700; color:#00ff88; font-size:0.9rem;">🪙 ${match.prizePool || 0}</div>
                         </div>
-                        <div>
-                            <div style="font-size:0.75rem; color:var(--text-muted);">DISTRIBUTED</div>
-                            <div style="font-weight:700; color:var(--primary);">₹${totalDistributed}</div>
+                        <div style="text-align:center;">
+                            <div style="font-size:0.65rem; color:var(--text-muted);">GIVEN</div>
+                            <div style="font-weight:700; color:var(--primary); font-size:0.9rem;">🪙 ${totalDistributed}</div>
                         </div>
-                        <div>
-                            <div style="font-size:0.75rem; color:var(--text-muted);">PLAYERS</div>
-                            <div style="font-weight:700;">${participantList.length}</div>
+                        <div style="text-align:center;">
+                            <div style="font-size:0.65rem; color:var(--text-muted);">PER KILL</div>
+                            <div style="font-weight:700; color:#ffc107; font-size:0.9rem;">🪙 ${match.perKill || 0}</div>
+                        </div>
+                        <div style="text-align:center;">
+                            <div style="font-size:0.65rem; color:var(--text-muted);">PLAYERS</div>
+                            <div style="font-weight:700; font-size:0.9rem;">${participantList.length}</div>
                         </div>
                     </div>
                     
+                    ${myResultHTML}
+                    ${posRewardsHTML}
+                    
+                    <!-- Results List -->
                     <div style="flex:1; overflow-y:auto; padding:0;">
-                        ${playersHtml || '<div style="text-align:center; padding:20px; color:var(--text-muted);">No results available</div>'}
+                        ${playersHtml || '<div style="text-align:center; padding:20px; color:var(--text-muted);">No results available yet</div>'}
                     </div>
                     
-                    <div style="padding:16px;">
-                        <button onclick="document.getElementById('match-results-modal').remove()" style="width:100%; background:var(--success); color:#fff; border:none; padding:14px; border-radius:10px; font-weight:700; font-size:1rem; cursor:pointer;">
+                    <div style="padding:14px 16px; border-top:1px solid var(--border);">
+                        <button onclick="document.getElementById('match-results-modal').remove()" style="width:100%; background:linear-gradient(135deg, #6366f1, #8b5cf6); color:#fff; border:none; padding:14px; border-radius:12px; font-weight:700; font-size:1rem; cursor:pointer;">
                             Close
                         </button>
                     </div>
@@ -499,7 +590,7 @@ window.viewMatchResults = async function (matchId) {
     }
 };
 
-// View Match Details - Shows full match info with rules and participants
+// View Match Details - Premium tournament-style detail modal
 window.viewMatchDetails = async function (matchId) {
     try {
         const [matchSnap, gameSnap] = await Promise.all([
@@ -515,113 +606,202 @@ window.viewMatchDetails = async function (matchId) {
 
         // Get game rules
         let gameRules = '';
+        let gameIcon = '';
         gameSnap.forEach(child => {
             if (child.key === match.gameId) {
-                gameRules = child.val().rules || '';
+                const g = child.val();
+                gameRules = g.rules || '';
+                gameIcon = g.icon || '';
             }
         });
 
         const participants = match.participants || {};
         const participantCount = Object.keys(participants).length;
-        const hasJoined = hasUserJoinedMatch(participants, state.user?.uid);
-        const statusColor = match.status === 'LIVE' ? '#ff9500' : match.status === 'COMPLETED' ? '#00cc6a' : '#00ff88';
+        const uid = state.user?.uid;
+        const hasJoined = hasUserJoinedMatch(participants, uid);
+        const maxSlots = match.maxParticipants || 100;
+        const isFull = participantCount >= maxSlots;
+        const progressPercent = Math.min((participantCount / maxSlots) * 100, 100);
+        const matchType = (match.type || 'Solo');
+        const statusColors = { 'UPCOMING': '#00ff88', 'LIVE': '#ff9500', 'COMPLETED': '#6366f1', 'CANCELLED': '#ef4444' };
+        const statusColor = statusColors[match.status] || '#00ff88';
 
-        // Build participants list
-        let participantsHtml = '';
-        Object.values(participants).forEach((p, i) => {
-            participantsHtml += `
-                <div style="display:inline-block; background:var(--bg-hover); padding:6px 12px; border-radius:20px; margin:4px; font-size:0.85rem;">
-                    <span style="color:var(--primary);">${i + 1}.</span> ${p.ign || 'Player'}
+        // ── Position Rewards ──
+        const posRewards = match.positionRewards || {};
+        const medalMap = { '1': '🥇', '2': '🥈', '3': '🥉' };
+        const ordMap = { '1': '1st', '2': '2nd', '3': '3rd' };
+        for (let p = 4; p <= 20; p++) ordMap[String(p)] = p + 'th';
+
+        let posRewardsHTML = '';
+        const prizeEntries = Object.entries(posRewards).sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
+        if (prizeEntries.length > 0) {
+            posRewardsHTML = `
+                <div style="padding:16px 20px; border-bottom:1px solid var(--border);">
+                    <div style="font-size:0.8rem; color:var(--primary); margin-bottom:10px; font-weight:600;">🏆 POSITION REWARDS</div>
+                    <div style="background:var(--bg-hover); border-radius:10px; overflow:hidden;">
+                        ${prizeEntries.map(([place, amount]) => `
+                            <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid rgba(255,255,255,0.05);">
+                                <span style="font-size:0.9rem;">${medalMap[place] || '🏅'} ${ordMap[place] || place + 'th'}</span>
+                                <span style="font-weight:700; color:#00ff88; font-size:0.95rem;">🪙 ${amount}</span>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
             `;
-        });
+        }
+
+        // ── Participants (with VIP badge) ──
+        const participantEntries = Object.entries(participants).slice(0, 20);
+        let participantsHTML = '';
+        // Batch-fetch VIP flags
+        const _vipMap = {};
+        const _pUids = participantEntries.map(([k, p]) => p.bookedBy || k).filter(Boolean);
+        const _uniquePUids = [...new Set(_pUids)];
+        await Promise.all(_uniquePUids.map(async pUid => {
+            try { const s = await db.ref(`users/${pUid}/isVip`).once('value'); _vipMap[pUid] = s.val() === true; } catch (e) { }
+        }));
+        if (participantEntries.length > 0) {
+            participantsHTML = participantEntries.map(([k, p], i) => {
+                const pUid = p.bookedBy || k;
+                const vBadge = _vipMap[pUid] && typeof getVipBadgeHtml === 'function' ? getVipBadgeHtml(true) : '';
+                return `
+                <span style="display:inline-block; font-size:0.78rem; padding:3px 10px; background:var(--bg-hover); border-radius:20px; margin:3px;">
+                    <span style="color:var(--primary); font-weight:600;">${i + 1}.</span> ${escapeHtml(p.ign) || 'Player'} ${vBadge}
+                </span>
+            `;
+            }).join('');
+            if (participantCount > 20) {
+                participantsHTML += `<span style="font-size:0.75rem; color:var(--text-muted); padding:3px 8px;">+${participantCount - 20} more</span>`;
+            }
+        } else {
+            participantsHTML = '<div style="color:var(--text-muted); font-size:0.85rem;">No participants yet</div>';
+        }
+
+        // ── CTA Button ──
+        let ctaHTML = '';
+        if (match.status === 'UPCOMING') {
+            if (hasJoined) {
+                ctaHTML = `
+                    <button disabled style="width:100%; background:rgba(0,255,136,0.15); color:#00ff88; border:2px solid rgba(0,255,136,0.3); padding:14px; border-radius:12px; font-weight:700; font-size:1rem; cursor:default;">
+                        <i class="fa-solid fa-circle-check"></i> Already Joined
+                    </button>`;
+            } else if (isFull) {
+                ctaHTML = `
+                    <button disabled style="width:100%; background:rgba(239,68,68,0.15); color:#ef4444; border:2px solid rgba(239,68,68,0.3); padding:14px; border-radius:12px; font-weight:700; font-size:1rem; cursor:default;">
+                        <i class="fa-solid fa-ban"></i> FULL
+                    </button>`;
+            } else {
+                ctaHTML = `
+                    <button onclick="document.getElementById('match-details-modal').remove(); openSlotModal('${matchId}')" style="width:100%; background:linear-gradient(135deg, #00ff88, #00cc6a); color:#000; border:none; padding:14px; border-radius:12px; font-weight:700; font-size:1rem; cursor:pointer; transition:transform 0.2s;" onmousedown="this.style.transform='scale(0.97)'" onmouseup="this.style.transform='scale(1)'">
+                        <i class="fa-solid fa-bolt"></i> Join Now — 🪙 ${match.entryFee || 0}
+                    </button>`;
+            }
+        } else if (match.status === 'LIVE' && hasJoined && match.roomId) {
+            ctaHTML = `
+                <button onclick="document.getElementById('match-details-modal').remove(); viewRoomDetails('${matchId}')" style="width:100%; background:linear-gradient(135deg, #ff9500, #ff6b00); color:#000; border:none; padding:14px; border-radius:12px; font-weight:700; font-size:1rem; cursor:pointer;">
+                    <i class="fa-solid fa-gamepad"></i> View Room Details
+                </button>`;
+        } else if (match.status === 'COMPLETED') {
+            ctaHTML = `
+                <button onclick="document.getElementById('match-details-modal').remove(); viewMatchResults('${matchId}')" style="width:100%; background:linear-gradient(135deg, #6366f1, #8b5cf6); color:#fff; border:none; padding:14px; border-radius:12px; font-weight:700; font-size:1rem; cursor:pointer;">
+                    <i class="fa-solid fa-trophy"></i> View Results
+                </button>`;
+        }
 
         const modalHtml = `
-            <div id="match-details-modal" style="position:fixed; inset:0; background:rgba(0,0,0,0.9); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px; overflow-y:auto;">
-                <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius:16px; max-width:400px; width:100%; max-height:90vh; overflow-y:auto; border: 2px solid ${statusColor};">
+            <div id="match-details-modal" style="position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:1000; display:flex; align-items:center; justify-content:center; padding:16px; overflow-y:auto;">
+                <div style="background: linear-gradient(145deg, #0f1923 0%, #151f2e 50%, #0d1520 100%); border-radius:20px; max-width:420px; width:100%; max-height:92vh; overflow-y:auto; border: 1.5px solid ${statusColor}; box-shadow: 0 0 60px rgba(0,0,0,0.5), 0 0 20px ${statusColor}33;">
                     <!-- Header -->
-                    <div style="padding:20px; border-bottom:1px solid var(--border); position:sticky; top:0; background:linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); z-index:1;">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <div>
-                                <span style="font-size:0.7rem; padding:3px 8px; border-radius:4px; background:${statusColor}; color:#000; font-weight:600;">${match.status}</span>
-                                ${hasJoined ? '<span style="font-size:0.7rem; padding:3px 8px; border-radius:4px; background:#00ff88; color:#000; font-weight:600; margin-left:6px;">✓ JOINED</span>' : ''}
+                    <div style="padding:20px 20px 16px; border-bottom:1px solid var(--border); position:sticky; top:0; background:linear-gradient(145deg, #0f1923, #151f2e); z-index:1; border-radius:20px 20px 0 0;">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                            <div style="flex:1;">
+                                <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;">
+                                    <span style="font-size:0.7rem; padding:3px 10px; border-radius:20px; background:${statusColor}22; color:${statusColor}; font-weight:700; border:1px solid ${statusColor}44;">${match.status}</span>
+                                    <span style="font-size:0.7rem; padding:3px 10px; border-radius:20px; background:var(--bg-hover); color:var(--text-muted); font-weight:600;">${matchType}</span>
+                                    ${hasJoined ? '<span style="font-size:0.7rem; padding:3px 10px; border-radius:20px; background:rgba(0,255,136,0.15); color:#00ff88; font-weight:700;">✓ JOINED</span>' : ''}
+                                </div>
+                                <h3 style="margin:0 0 4px; color:#fff; font-size:1.15rem;">${match.title || 'Match'}</h3>
+                                <div style="color:var(--text-muted); font-size:0.82rem;">${match.gameName || 'Game'} • ${match.map || 'Map'}</div>
                             </div>
-                            <button onclick="document.getElementById('match-details-modal').remove()" style="background:transparent; border:none; color:var(--text-muted); font-size:1.5rem; cursor:pointer;">&times;</button>
-                        </div>
-                        <h3 style="margin:12px 0 4px; color:#fff;">${match.title || 'Match'}</h3>
-                        <div style="color:var(--text-muted); font-size:0.85rem;">${match.gameName || 'Game'} • ${match.type || 'Solo'} • ${match.map || 'Map'}</div>
-                    </div>
-                    
-                    <!-- Match Info -->
-                    <div style="padding:16px 20px; display:grid; grid-template-columns:repeat(2,1fr); gap:12px; border-bottom:1px solid var(--border);">
-                        <div style="text-align:center; padding:12px; background:var(--bg-hover); border-radius:10px;">
-                            <div style="font-size:0.7rem; color:var(--text-muted);">ENTRY FEE</div>
-                            <div style="font-size:1.2rem; font-weight:700;">₹${match.entryFee || 0}</div>
-                        </div>
-                        <div style="text-align:center; padding:12px; background:var(--bg-hover); border-radius:10px;">
-                            <div style="font-size:0.7rem; color:var(--text-muted);">PRIZE POOL</div>
-                            <div style="font-size:1.2rem; font-weight:700; color:var(--success);">₹${match.prizePool || 0}</div>
-                        </div>
-                        <div style="text-align:center; padding:12px; background:var(--bg-hover); border-radius:10px;">
-                            <div style="font-size:0.7rem; color:var(--text-muted);">PER KILL</div>
-                            <div style="font-size:1.2rem; font-weight:700; color:var(--warning);">₹${match.perKill || 0}</div>
-                        </div>
-                        <div style="text-align:center; padding:12px; background:var(--bg-hover); border-radius:10px;">
-                            <div style="font-size:0.7rem; color:var(--text-muted);">SLOTS</div>
-                            <div style="font-size:1.2rem; font-weight:700;">${participantCount}/${match.maxParticipants || 100}</div>
+                            <button onclick="document.getElementById('match-details-modal').remove()" style="background:rgba(255,255,255,0.08); border:none; color:var(--text-muted); font-size:1.3rem; cursor:pointer; width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0;">&times;</button>
                         </div>
                     </div>
                     
-                    <!-- Date/Time -->
-                    <div style="padding:16px 20px; border-bottom:1px solid var(--border);">
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <i class="fa-regular fa-calendar" style="color:var(--primary);"></i>
+                    <!-- Match Info Grid -->
+                    <div style="padding:14px 20px; display:grid; grid-template-columns:repeat(2,1fr); gap:10px; border-bottom:1px solid var(--border);">
+                        <div style="text-align:center; padding:14px 8px; background:rgba(0,255,136,0.06); border:1px solid rgba(0,255,136,0.12); border-radius:12px;">
+                            <div style="font-size:0.68rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Entry Fee</div>
+                            <div style="font-size:1.25rem; font-weight:700; color:#4dd0e1; margin-top:2px;">${match.entryFee > 0 ? '🪙 ' + match.entryFee : 'FREE'}</div>
+                        </div>
+                        <div style="text-align:center; padding:14px 8px; background:rgba(0,255,136,0.06); border:1px solid rgba(0,255,136,0.12); border-radius:12px;">
+                            <div style="font-size:0.68rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Prize Pool</div>
+                            <div style="font-size:1.25rem; font-weight:700; color:#00ff88; margin-top:2px;">🪙 ${match.prizePool || 0}</div>
+                        </div>
+                        <div style="text-align:center; padding:14px 8px; background:rgba(255,193,7,0.06); border:1px solid rgba(255,193,7,0.12); border-radius:12px;">
+                            <div style="font-size:0.68rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Per Kill</div>
+                            <div style="font-size:1.25rem; font-weight:700; color:#ffc107; margin-top:2px;">🪙 ${match.perKill || 0}</div>
+                        </div>
+                        <div style="text-align:center; padding:14px 8px; background:var(--bg-hover); border:1px solid var(--border); border-radius:12px;">
+                            <div style="font-size:0.68rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Slots</div>
+                            <div style="font-size:1.25rem; font-weight:700; margin-top:2px;"><span style="color:${isFull ? '#ef4444' : '#00ff88'}">${participantCount}</span>/${maxSlots}</div>
+                        </div>
+                    </div>
+                    
+                    ${posRewardsHTML}
+                    
+                    <!-- Schedule -->
+                    <div style="padding:14px 20px; border-bottom:1px solid var(--border);">
+                        <div style="font-size:0.8rem; color:var(--primary); margin-bottom:8px; font-weight:600;">📅 SCHEDULE</div>
+                        <div style="display:flex; align-items:center; gap:12px; background:var(--bg-hover); padding:12px; border-radius:10px;">
+                            <i class="fa-regular fa-calendar" style="color:var(--primary); font-size:1.2rem;"></i>
                             <div>
-                                <div style="font-weight:600;">${new Date(match.dateTime || match.time).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+                                <div style="font-weight:600; font-size:0.95rem;">${new Date(match.dateTime || match.time).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
                                 <div style="color:var(--text-muted); font-size:0.85rem;">${new Date(match.dateTime || match.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</div>
                             </div>
                         </div>
                     </div>
                     
                     ${hasJoined && match.status === 'LIVE' && match.roomId ? `
-                    <!-- Room Details for joined users -->
-                    <div style="padding:16px 20px; background:rgba(0,255,136,0.1); border-bottom:1px solid var(--border);">
+                    <!-- Room Details -->
+                    <div style="padding:14px 20px; border-bottom:1px solid var(--border); background:rgba(0,255,136,0.04);">
                         <div style="font-size:0.8rem; color:var(--primary); margin-bottom:10px; font-weight:600;">🎮 ROOM DETAILS</div>
-                        <div style="display:flex; gap:16px;">
-                            <div style="flex:1; background:var(--bg-main); padding:10px; border-radius:8px; text-align:center;">
-                                <div style="font-size:0.7rem; color:var(--text-muted);">ROOM ID</div>
-                                <div style="font-family:monospace; font-weight:700; font-size:1.1rem;">${match.roomId}</div>
+                        <div style="display:flex; gap:12px;">
+                            <div style="flex:1; background:var(--bg-main); padding:12px; border-radius:10px; text-align:center; border:1px solid var(--border);">
+                                <div style="font-size:0.68rem; color:var(--text-muted); margin-bottom:4px;">ROOM ID</div>
+                                <div style="font-family:monospace; font-weight:700; font-size:1.15rem; color:#fff;">${match.roomId}</div>
                             </div>
-                            <div style="flex:1; background:var(--bg-main); padding:10px; border-radius:8px; text-align:center;">
-                                <div style="font-size:0.7rem; color:var(--text-muted);">PASSWORD</div>
-                                <div style="font-family:monospace; font-weight:700; font-size:1.1rem;">${match.roomPassword}</div>
+                            <div style="flex:1; background:var(--bg-main); padding:12px; border-radius:10px; text-align:center; border:1px solid var(--border);">
+                                <div style="font-size:0.68rem; color:var(--text-muted); margin-bottom:4px;">PASSWORD</div>
+                                <div style="font-family:monospace; font-weight:700; font-size:1.15rem; color:#fff;">${match.roomPassword}</div>
                             </div>
                         </div>
                     </div>
                     ` : ''}
                     
-                    <!-- Rules -->
                     ${gameRules ? `
-                    <div style="padding:16px 20px; border-bottom:1px solid var(--border);">
-                        <div style="font-size:0.8rem; color:var(--primary); margin-bottom:10px; font-weight:600;">📋 GAME RULES</div>
-                        <div style="color:var(--text-muted); font-size:0.9rem; line-height:1.6; white-space:pre-wrap;">${gameRules}</div>
+                    <!-- Rules (above participants) -->
+                    <div style="padding:14px 20px; border-bottom:1px solid var(--border);">
+                        <div style="font-size:0.8rem; color:var(--primary); margin-bottom:8px; font-weight:600;">📋 RULES</div>
+                        <div style="background:var(--bg-hover); border-radius:10px; padding:12px; color:var(--text-muted); font-size:0.88rem; line-height:1.7; white-space:pre-wrap;">${gameRules}</div>
                     </div>
                     ` : ''}
                     
-                    <!-- Participants -->
-                    <div style="padding:16px 20px;">
-                        <div style="font-size:0.8rem; color:var(--primary); margin-bottom:10px; font-weight:600;">👥 PARTICIPANTS (${participantCount})</div>
-                        <div style="max-height:150px; overflow-y:auto;">
-                            ${participantsHtml || '<div style="color:var(--text-muted); font-size:0.9rem;">No participants yet</div>'}
+                    <!-- Participants (below rules) -->
+                    <div style="padding:14px 20px; border-bottom:1px solid var(--border);">
+                        <div style="font-size:0.8rem; color:var(--primary); margin-bottom:8px; font-weight:600;">👥 PARTICIPANTS (${participantCount}/${maxSlots})</div>
+                        <div style="background:var(--bg-hover); border-radius:10px; padding:10px; max-height:160px; overflow-y:auto;">
+                            <div style="display:flex; flex-wrap:wrap; gap:2px;">
+                                ${participantsHTML}
+                            </div>
+                        </div>
+                        <!-- Slot progress -->
+                        <div style="margin-top:10px; background:rgba(255,255,255,0.05); border-radius:6px; height:6px; overflow:hidden;">
+                            <div style="background:${isFull ? '#ef4444' : 'var(--primary)'}; height:100%; width:${progressPercent}%; transition:width 0.3s; border-radius:6px;"></div>
                         </div>
                     </div>
                     
-                    <!-- Action Button -->
-                    <div style="padding:16px 20px; border-top:1px solid var(--border);">
-                        <button onclick="document.getElementById('match-details-modal').remove()" style="width:100%; background:${statusColor}; color:#000; border:none; padding:14px; border-radius:10px; font-weight:700; cursor:pointer;">
-                            Close
-                        </button>
-                    </div>
+                    <!-- CTA -->
+                    ${ctaHTML ? `<div style="padding:16px 20px;">${ctaHTML}</div>` : ''}
                 </div>
             </div>
         `;
@@ -704,12 +884,15 @@ window.openSlotModal = async function (matchId) {
         // Build booked slots map
         slotState.bookedSlots = {};
         if (match.participants) {
+            let legacySlotIndex = 1; // Counter for legacy bookings without team/position
             Object.entries(match.participants).forEach(([key, data]) => {
                 if (data.teamNumber && data.slotPosition) {
                     slotState.bookedSlots[`${data.teamNumber}_${data.slotPosition}`] = data;
                 } else {
-                    // Legacy booking - assign to next available
-                    // This handles old-style bookings
+                    // Legacy booking — assign to next sequential solo slot
+                    const assignedTeam = data.slotNumber || legacySlotIndex;
+                    slotState.bookedSlots[`${assignedTeam}_A`] = { ...data, bookedBy: data.bookedBy || key };
+                    legacySlotIndex++;
                 }
             });
         }
@@ -905,11 +1088,11 @@ function updateSlotSummary() {
     if (count > 0) {
         summaryDiv.classList.remove('hidden');
         document.getElementById('slot-count-display').textContent = `${count} slot(s)`;
-        document.getElementById('slot-total-amount').textContent = `₹${total}`;
+        document.getElementById('slot-total-amount').textContent = `🪙 ${total}`;
 
         btn.disabled = false;
         btn.style.opacity = '1';
-        btn.innerHTML = `<i class="fa-solid fa-wallet"></i> Pay ₹${total} & Join`;
+        btn.innerHTML = `<i class="fa-solid fa-wallet"></i> Pay 🪙 ${total} & Join`;
     } else {
         summaryDiv.classList.add('hidden');
         btn.disabled = true;
@@ -1008,55 +1191,8 @@ window.confirmSlotBooking = async function () {
 
 
 window.openJoinModal = function (matchId, fee) {
-    // Redirect to new slot modal
+    // Redirect to slot-based booking modal
     openSlotModal(matchId);
-};
-
-window.confirmJoinMatch = async function () {
-    const ign = document.getElementById('join-ign').value.trim();
-    if (!ign) return showToast('Enter your In-Game Name (IGN)', 'error');
-
-    const matchId = state.currentMatchId;
-    const uid = state.user.uid;
-    const selectedSlots = state.selectedSlots || [];
-
-    try {
-        // Show loading state
-        showToast('Joining match...', 'info');
-
-        // Get the game ID from the match for IGN saving
-        const matchSnap = await db.ref(`esports_matches/${matchId}`).once('value');
-        const matchData = matchSnap.val();
-        const gameId = matchData?.gameId || matchData?.gameName || '';
-
-        const joinEsportsMatchFn = functions.httpsCallable('joinEsportsMatch');
-        const result = await joinEsportsMatchFn({
-            matchId: matchId,
-            ign: ign,
-            selectedSlots: selectedSlots,
-            gameId: gameId
-        });
-        const r = result.data;
-
-        // Sync local state
-        state.userData.depositBalance = r.newDepositBalance;
-        state.userData.winningBalance = r.newWinningBalance;
-        updateUIHeader();
-
-        showToast('🎮 Joined Successfully!', 'success');
-        closeModal('join-match-modal');
-
-        // Clear selected slots
-        state.selectedSlots = [];
-
-        // Refresh the matches list
-        loadMatchesList();
-
-    } catch (e) {
-        console.error('[JOIN] Error:', e);
-        closeModal('join-match-modal');
-        showToast('Failed: ' + (e.details || e.message || 'Please try again'), 'error');
-    }
 };
 
 // Show insufficient balance modal with redirect option
@@ -1098,29 +1234,61 @@ window.closeInsufficientBalanceModal = function () {
     if (modal) modal.remove();
 };
 
-// Challenge Created Success Modal with Instructions
+// Challenge Created Success Modal — Premium Design
 function showChallengeCreatedModal() {
     const modal = document.createElement('div');
     modal.id = 'challenge-created-modal';
     modal.className = 'modal-overlay';
     modal.innerHTML = `
-        <div class="modal-content" style="text-align: left; max-width: 380px;">
-            <h3 style="color: var(--danger); margin-bottom: 0.5rem; text-align: center; font-weight: 700;">
-                You have successfully created the challenge. The challenge will appear in your My Challenges.
-            </h3>
-            <ol style="padding-left: 1.2rem; margin: 1rem 0; font-size: 0.85rem; color: var(--text-muted); line-height: 1.6;">
-                <li><strong>Please wait until an opponent accepts your challenge.</strong></li>
-                <li><strong>Once matched, share the Room Code from Ludo King app.</strong></li>
-                <li><strong>Create a room in Ludo King and copy the code to share.</strong></li>
-                <li><strong>After the game ends, submit your result immediately.</strong></li>
-                <li><strong style="color: var(--danger);">Penalty: ₹25 deduction for not submitting your result.</strong></li>
-                <li><strong style="color: var(--danger);">Penalty: ₹25 deduction for submitting incorrect result.</strong></li>
-                <li><strong>Need help? Watch the tutorial video for Room Code steps.</strong></li>
-                <li><strong style="color: var(--danger);">Important: Share room code within 15 mins or ₹25 penalty applies.</strong></li>
-            </ol>
-            <button class="btn btn-primary btn-block" onclick="closeChallengeCreatedModal()" style="margin-top: 0.5rem;">
-                OK
-            </button>
+        <div style="background: linear-gradient(145deg, #0f172a, #1e293b); border: 1px solid rgba(34,197,94,0.15); border-radius: 20px; max-width: 380px; width: 90%; margin: auto; overflow: hidden; box-shadow: 0 24px 48px rgba(0,0,0,0.4);">
+            <!-- Header -->
+            <div style="text-align: center; padding: 28px 20px 16px; position: relative;">
+                <div style="position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 50%; height: 3px; background: linear-gradient(90deg, transparent, #22c55e, transparent);"></div>
+                <div style="width: 56px; height: 56px; background: linear-gradient(135deg, #22c55e, #16a34a); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; box-shadow: 0 8px 24px rgba(34,197,94,0.3);">
+                    <i class="fa-solid fa-check" style="color: white; font-size: 1.4rem;"></i>
+                </div>
+                <div style="font-weight: 700; font-size: 1.1rem; color: #e2e8f0; margin-bottom: 4px;">Challenge Created!</div>
+                <div style="font-size: 0.78rem; color: #64748b;">Your challenge is live. Check <strong style="color: #94a3b8;">My Challenges</strong></div>
+            </div>
+
+            <!-- Steps -->
+            <div style="padding: 0 16px 4px;">
+                <div style="font-size: 0.68rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; padding-left: 4px;">What's Next</div>
+
+                <div style="display: flex; align-items: start; gap: 10px; padding: 10px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; margin-bottom: 8px;">
+                    <span style="font-size: 0.85rem; min-width: 20px;">⏳</span>
+                    <span style="font-size: 0.78rem; color: #94a3b8;">Wait for an opponent to accept your challenge</span>
+                </div>
+                <div style="display: flex; align-items: start; gap: 10px; padding: 10px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; margin-bottom: 8px;">
+                    <span style="font-size: 0.85rem; min-width: 20px;">🔗</span>
+                    <span style="font-size: 0.78rem; color: #94a3b8;">Create a room in Ludo King and share the code</span>
+                </div>
+                <div style="display: flex; align-items: start; gap: 10px; padding: 10px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; margin-bottom: 8px;">
+                    <span style="font-size: 0.85rem; min-width: 20px;">🏆</span>
+                    <span style="font-size: 0.78rem; color: #94a3b8;">Play the match and submit your result immediately</span>
+                </div>
+            </div>
+
+            <!-- Penalties -->
+            <div style="padding: 0 16px 4px;">
+                <div style="font-size: 0.68rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; padding-left: 4px;">Important Rules</div>
+
+                <div style="display: flex; align-items: start; gap: 10px; padding: 10px; background: rgba(239,68,68,0.04); border: 1px solid rgba(239,68,68,0.1); border-radius: 10px; margin-bottom: 8px;">
+                    <span style="font-size: 0.85rem; min-width: 20px;">⚠️</span>
+                    <span style="font-size: 0.75rem; color: #fca5a5;">Share room code within 15 mins — <strong>🪙 25 penalty</strong> if missed</span>
+                </div>
+                <div style="display: flex; align-items: start; gap: 10px; padding: 10px; background: rgba(239,68,68,0.04); border: 1px solid rgba(239,68,68,0.1); border-radius: 10px; margin-bottom: 8px;">
+                    <span style="font-size: 0.85rem; min-width: 20px;">⚠️</span>
+                    <span style="font-size: 0.75rem; color: #fca5a5;">🪙 25 deduction for not submitting or submitting wrong result</span>
+                </div>
+            </div>
+
+            <!-- Button -->
+            <div style="padding: 12px 16px 20px;">
+                <button onclick="closeChallengeCreatedModal()" style="width: 100%; padding: 14px; background: linear-gradient(135deg, #22c55e, #16a34a); color: white; border: none; border-radius: 12px; font-weight: 600; font-size: 0.9rem; cursor: pointer; box-shadow: 0 4px 12px rgba(34,197,94,0.25);">
+                    <i class="fa-solid fa-thumbs-up" style="margin-right: 6px;"></i> Got It, Let's Play!
+                </button>
+            </div>
         </div>
     `;
     document.body.appendChild(modal);
@@ -1131,29 +1299,61 @@ window.closeChallengeCreatedModal = function () {
     if (modal) modal.remove();
 };
 
-// Challenge Joined Success Modal with Instructions (for acceptor)
+// Challenge Joined Success Modal — Premium Design
 function showChallengeJoinedModal() {
     const modal = document.createElement('div');
     modal.id = 'challenge-joined-modal';
     modal.className = 'modal-overlay';
     modal.innerHTML = `
-        <div class="modal-content" style="text-align: left; max-width: 380px;">
-            <h3 style="color: var(--danger); margin-bottom: 0.5rem; text-align: center; font-weight: 700;">
-                You have successfully joined the challenge. The challenge will appear in your My Challenges.
-            </h3>
-            <ol style="padding-left: 1.2rem; margin: 1rem 0; font-size: 0.85rem; color: var(--text-muted); line-height: 1.6;">
-                <li><strong>The challenger will share the Room Code shortly.</strong></li>
-                <li><strong>Open Ludo King app and enter the code to join.</strong></li>
-                <li><strong>Complete the match and report your result promptly.</strong></li>
-                <li><strong style="color: var(--danger);">Penalty: ₹25 deduction if result is not submitted.</strong></li>
-                <li><strong style="color: var(--danger);">Penalty: ₹25 deduction for false result claims.</strong></li>
-                <li><strong>Watch the help video to understand the process better.</strong></li>
-                <li><strong>For any issues, reach out to JeetoPlay support.</strong></li>
-                <li><strong style="color: var(--danger);">Important: Submit result within 2 hours or ₹25 penalty applies.</strong></li>
-            </ol>
-            <button class="btn btn-primary btn-block" onclick="closeChallengeJoinedModal()" style="margin-top: 0.5rem;">
-                OK
-            </button>
+        <div style="background: linear-gradient(145deg, #0f172a, #1e293b); border: 1px solid rgba(99,102,241,0.15); border-radius: 20px; max-width: 380px; width: 90%; margin: auto; overflow: hidden; box-shadow: 0 24px 48px rgba(0,0,0,0.4);">
+            <!-- Header -->
+            <div style="text-align: center; padding: 28px 20px 16px; position: relative;">
+                <div style="position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 50%; height: 3px; background: linear-gradient(90deg, transparent, #6366f1, transparent);"></div>
+                <div style="width: 56px; height: 56px; background: linear-gradient(135deg, #6366f1, #8b5cf6); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; box-shadow: 0 8px 24px rgba(99,102,241,0.3);">
+                    <i class="fa-solid fa-handshake" style="color: white; font-size: 1.3rem;"></i>
+                </div>
+                <div style="font-weight: 700; font-size: 1.1rem; color: #e2e8f0; margin-bottom: 4px;">Challenge Accepted!</div>
+                <div style="font-size: 0.78rem; color: #64748b;">You're in! Check <strong style="color: #94a3b8;">My Challenges</strong> for updates</div>
+            </div>
+
+            <!-- Steps -->
+            <div style="padding: 0 16px 4px;">
+                <div style="font-size: 0.68rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; padding-left: 4px;">What's Next</div>
+
+                <div style="display: flex; align-items: start; gap: 10px; padding: 10px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; margin-bottom: 8px;">
+                    <span style="font-size: 0.85rem; min-width: 20px;">📩</span>
+                    <span style="font-size: 0.78rem; color: #94a3b8;">The challenger will share the Room Code shortly</span>
+                </div>
+                <div style="display: flex; align-items: start; gap: 10px; padding: 10px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; margin-bottom: 8px;">
+                    <span style="font-size: 0.85rem; min-width: 20px;">🎮</span>
+                    <span style="font-size: 0.78rem; color: #94a3b8;">Open Ludo King and enter the code to join the match</span>
+                </div>
+                <div style="display: flex; align-items: start; gap: 10px; padding: 10px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; margin-bottom: 8px;">
+                    <span style="font-size: 0.85rem; min-width: 20px;">📊</span>
+                    <span style="font-size: 0.78rem; color: #94a3b8;">After the game, submit your result promptly</span>
+                </div>
+            </div>
+
+            <!-- Penalties -->
+            <div style="padding: 0 16px 4px;">
+                <div style="font-size: 0.68rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; padding-left: 4px;">Important Rules</div>
+
+                <div style="display: flex; align-items: start; gap: 10px; padding: 10px; background: rgba(239,68,68,0.04); border: 1px solid rgba(239,68,68,0.1); border-radius: 10px; margin-bottom: 8px;">
+                    <span style="font-size: 0.85rem; min-width: 20px;">⚠️</span>
+                    <span style="font-size: 0.75rem; color: #fca5a5;">Submit result within 2 hours — <strong>🪙 25 penalty</strong> if missed</span>
+                </div>
+                <div style="display: flex; align-items: start; gap: 10px; padding: 10px; background: rgba(239,68,68,0.04); border: 1px solid rgba(239,68,68,0.1); border-radius: 10px; margin-bottom: 8px;">
+                    <span style="font-size: 0.85rem; min-width: 20px;">⚠️</span>
+                    <span style="font-size: 0.75rem; color: #fca5a5;">🪙 25 deduction for false result claims</span>
+                </div>
+            </div>
+
+            <!-- Button -->
+            <div style="padding: 12px 16px 20px;">
+                <button onclick="closeChallengeJoinedModal()" style="width: 100%; padding: 14px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; border: none; border-radius: 12px; font-weight: 600; font-size: 0.9rem; cursor: pointer; box-shadow: 0 4px 12px rgba(99,102,241,0.25);">
+                    <i class="fa-solid fa-gamepad" style="margin-right: 6px;"></i> Let's Go!
+                </button>
+            </div>
         </div>
     `;
     document.body.appendChild(modal);

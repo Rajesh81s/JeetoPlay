@@ -1,32 +1,27 @@
 // JeetoPlay — Profile
 // Auto-extracted from app.html
 
-window.openEditProfileModal = function () {
-    // Populate fields
-    document.getElementById('edit-fullname').value = state.userData.name || '';
-    document.getElementById('edit-mobile').value = state.userData.phone || '';
+window.viewProfileDetails = function () {
+    const userData = state.userData || {};
+    const user = state.user || {};
 
-    document.getElementById('edit-profile-modal').classList.remove('hidden');
-};
+    // Populate read-only fields
+    document.getElementById('pd-fullname').textContent = userData.fullName || userData.name || userData.username || 'Not set';
+    document.getElementById('pd-email').textContent = user.email || userData.email || 'Not set';
+    document.getElementById('pd-mobile').textContent = userData.phone || userData.mobile || 'Not set';
+    document.getElementById('pd-uid').textContent = user.uid || '—';
 
-window.saveProfile = async function () {
-    const name = document.getElementById('edit-fullname').value.trim();
-    const phone = document.getElementById('edit-mobile').value.trim();
-
-    if (!name || !phone) return showToast('Please fill all fields', 'error');
-
-    try {
-        await db.ref('users/' + state.user.uid).update({
-            name: name,
-            phone: phone,
-            updatedAt: firebase.database.ServerValue.TIMESTAMP
+    // Format join date
+    const joinDate = userData.createdAt || userData.joinedAt;
+    if (joinDate) {
+        document.getElementById('pd-joined').textContent = new Date(joinDate).toLocaleDateString('en-IN', {
+            day: '2-digit', month: 'long', year: 'numeric'
         });
-        showToast('Profile Updated!', 'success');
-        closeModal('edit-profile-modal');
-        // UI will auto-update via listener
-    } catch (e) {
-        showToast('Update failed: ' + e.message, 'error');
+    } else {
+        document.getElementById('pd-joined').textContent = '—';
     }
+
+    document.getElementById('profile-details-modal').classList.remove('hidden');
 };
 
 window.openNotificationSettings = function () {

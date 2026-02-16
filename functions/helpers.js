@@ -2,10 +2,45 @@
  * helpers.js — Shared utilities for all Cloud Function modules
  * Contains: assertAuth, assertAdmin, sendPush, getLudoCommission,
  *           deductBalance, refundPlayer, countUserLudoMatches, checkAndCreditReferral
+ *
+ * ── Cloud Functions v2 Migration ──
+ * v2 imports are provided for all domain files. The v1 `functions` object
+ * is preserved for `functions.logger` compatibility.
  */
 
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+
+// ── v1 wrappers with v2-compatible signatures ──
+// Transforms v1 (data, context) into v2-style { data, auth } request object
+// so ALL downstream code remains unchanged (uses request.data, request.auth, etc.)
+const HttpsError = functions.https.HttpsError;
+
+// v1 onRequest wrapper — supports v2-style (options, handler) signature
+// v1 functions.https.onRequest only accepts (handler), so strip options if provided
+function onRequest(optionsOrHandler, maybeHandler) {
+    const handler = typeof optionsOrHandler === 'function' ? optionsOrHandler : maybeHandler;
+    if (!handler || typeof handler !== 'function') {
+        throw new Error('onRequest requires a handler function');
+    }
+    return functions.https.onRequest(handler);
+}
+
+function onCall(handler) {
+    return functions.https.onCall((data, context) => {
+        // Create a v2-like request object from v1 params
+        const request = { data, auth: context.auth, rawRequest: context.rawRequest };
+        return handler(request);
+    });
+}
+
+function onSchedule(config, handler) {
+    const cron = typeof config === 'string' ? config : config.schedule;
+    const tz = (typeof config === 'object' && config.timeZone) ? config.timeZone : 'Asia/Kolkata';
+    return functions.pubsub.schedule(cron).timeZone(tz).onRun((context) => {
+        return handler({ scheduleTime: context.timestamp });
+    });
+}
 
 // Initialize only once — safe to call multiple times but only first call applies
 if (!admin.apps.length) {
@@ -15,15 +50,15 @@ const db = admin.database();
 
 // ─── Auth Helpers ───────────────────────────────────────────
 
-function assertAuth(context) {
-    if (!context.auth) {
-        throw new functions.https.HttpsError('unauthenticated', 'Must be logged in');
+function assertAuth(request) {
+    if (!request.auth) {
+        throw new HttpsError('unauthenticated', 'Must be logged in');
     }
-    return context.auth.uid;
+    return request.auth.uid;
 }
 
-async function assertAdmin(context) {
-    const uid = assertAuth(context);
+async function assertAdmin(request) {
+    const uid = assertAuth(request);
 
     // Check admins node first (MAIN_ADMIN)
     const adminSnap = await db.ref(`admins/${uid}`).once('value');
@@ -34,7 +69,53 @@ async function assertAdmin(context) {
     if (modSnap.exists() && modSnap.val().isActive) return uid;
 
     functions.logger.error(`[assertAdmin] Access denied for uid: ${uid} - not found in admins or moderators`);
-    throw new functions.https.HttpsError('permission-denied', 'Admin access required');
+    throw new HttpsError('permission-denied', 'Admin access required');
+}
+
+// ─── Ban Enforcement Helper ─────────────────────────────────
+
+/**
+ * Server-side ban check. Call after assertAuth() on all sensitive functions.
+ * Supports temp bans with auto-expiry. Returns user data to avoid duplicate reads.
+ *
+ * @param {string} uid - User UID
+ * @returns {Object} User data from database
+ * @throws {HttpsError} permission-denied if user is banned
+ */
+async function assertNotBanned(uid) {
+    const snap = await db.ref(`users/${uid}`).once('value');
+    const user = snap.val();
+
+    if (!user) {
+        throw new HttpsError('not-found', 'User account not found');
+    }
+
+    if (user.isBlocked) {
+        // Check if temp ban has expired
+        if (user.banExpiresAt && user.banExpiresAt < Date.now()) {
+            // Auto-unban: temp ban expired
+            await db.ref(`users/${uid}`).update({
+                isBlocked: false,
+                banExpiresAt: null,
+                banReason: null
+            });
+            functions.logger.info(`[assertNotBanned] Temp ban expired for ${uid}, auto-unblocked`);
+            user.isBlocked = false;
+            return user;
+        }
+
+        // Ban is active
+        const reason = user.banReason || 'Account suspended';
+        const isPermanent = !user.banExpiresAt;
+        const msg = isPermanent
+            ? `Account suspended: ${reason}`
+            : `Account temporarily suspended: ${reason}`;
+
+        functions.logger.warn(`[assertNotBanned] Blocked user ${uid} tried to access function`);
+        throw new HttpsError('permission-denied', msg);
+    }
+
+    return user;
 }
 
 // ─── Push Notification Helper ───────────────────────────────
@@ -221,11 +302,14 @@ async function refundPlayer(playerData, matchId, matchAmount, reason) {
     const depositRefund = playerData.depositDeducted || 0;
     const winningRefund = playerData.winningDeducted || 0;
 
-    if (depositRefund > 0) {
-        await db.ref(`users/${playerUid}/depositBalance`).transaction(b => (b || 0) + depositRefund);
-    }
-    if (winningRefund > 0) {
-        await db.ref(`users/${playerUid}/winningBalance`).transaction(b => (b || 0) + winningRefund);
+    if (depositRefund > 0 || winningRefund > 0) {
+        await db.ref(`users/${playerUid}`).transaction(user => {
+            if (!user) return user;
+            if (depositRefund > 0) user.depositBalance = (user.depositBalance || 0) + depositRefund;
+            if (winningRefund > 0) user.winningBalance = (user.winningBalance || 0) + winningRefund;
+            user.walletBalance = (user.depositBalance || 0) + (user.winningBalance || 0);
+            return user;
+        });
     }
 
     const txnKey = db.ref('wallet_transactions').push().key;
@@ -316,8 +400,13 @@ async function checkAndCreditReferral(playerUid) {
         if (completedGames >= requiredGames) {
             const rewardAmount = refData.rewardAmount || 5;
 
-            // Credit referrer's DEPOSIT balance (not winning!)
-            await db.ref(`users/${referrerUid}/depositBalance`).transaction(b => (b || 0) + rewardAmount);
+            // Credit referrer's DEPOSIT balance atomically (not winning!)
+            await db.ref(`users/${referrerUid}`).transaction(user => {
+                if (!user) return user;
+                user.depositBalance = (user.depositBalance || 0) + rewardAmount;
+                user.walletBalance = (user.depositBalance || 0) + (user.winningBalance || 0);
+                return user;
+            });
 
             // Mark referral as COMPLETED
             await db.ref(`referrals/${referrerUid}/${playerUid}`).update({
@@ -348,8 +437,8 @@ async function checkAndCreditReferral(playerUid) {
             });
 
             // Notify referrer — reward credited!
-            await sendPush(referrerUid, `🎊 ₹${rewardAmount} Referral Bonus Credited!`,
-                `Your referred friend completed ${requiredGames} games! ₹${rewardAmount} has been added to your deposit balance.`,
+            await sendPush(referrerUid, `🎊 🪙 ${rewardAmount} Referral Bonus Credited!`,
+                `Your referred friend completed ${requiredGames} games! 🪙 ${rewardAmount} has been added to your deposit balance.`,
                 { type: 'REFERRAL_REWARD', amount: String(rewardAmount) });
 
             functions.logger.info(`[checkAndCreditReferral] Credited ₹${rewardAmount} to ${referrerUid} for referral ${playerUid}`);
@@ -360,18 +449,105 @@ async function checkAndCreditReferral(playerUid) {
     }
 }
 
+// ─── Rate Limiting Helper ───────────────────────────────────
+
+/**
+ * Server-side rate limiter using Firebase Realtime Database.
+ * Tracks call timestamps per user/action in rate_limits/{uid}/{action}.
+ * Uses atomic transaction to count calls within sliding window.
+ *
+ * @param {string} uid      - User UID
+ * @param {string} action   - Action identifier (e.g., 'withdrawal', 'deposit')
+ * @param {number} maxCalls - Max calls allowed within window
+ * @param {number} windowMs - Time window in milliseconds
+ * @throws {HttpsError} resource-exhausted if rate limit exceeded
+ */
+async function checkRateLimit(uid, action, maxCalls, windowMs) {
+    const now = Date.now();
+    const cutoff = now - windowMs;
+    const ref = db.ref(`rate_limits/${uid}/${action}`);
+
+    const txn = await ref.transaction(data => {
+        if (!data) data = { calls: [] };
+
+        // Firebase RTDB converts arrays to objects ({0: ts, 1: ts, ...})
+        // Always normalize to array using Object.values()
+        const rawCalls = data.calls || [];
+        const callsArray = Array.isArray(rawCalls) ? rawCalls : Object.values(rawCalls);
+
+        // Clean expired entries
+        const activeCalls = callsArray.filter(ts => typeof ts === 'number' && ts > cutoff);
+
+        if (activeCalls.length >= maxCalls) {
+            // Don't modify — we'll check committed flag
+            return;  // Abort transaction
+        }
+
+        // Add current call timestamp
+        activeCalls.push(now);
+        data.calls = activeCalls;
+        data.lastCall = now;
+        return data;
+    });
+
+    if (!txn.committed) {
+        const windowMin = Math.ceil(windowMs / 60000);
+        throw new HttpsError('resource-exhausted',
+            `Too many requests. Max ${maxCalls} per ${windowMin} minute${windowMin > 1 ? 's' : ''}. Please try again later.`);
+    }
+}
+
+// ─── Structured Logging ─────────────────────────────────────
+
+/**
+ * Structured log helper for production observability.
+ * Outputs JSON metadata alongside messages for Cloud Logging.
+ *
+ * @param {string} fn - Function name (e.g., 'submitLudoResult')
+ * @param {'info'|'warn'|'error'} level - Log level
+ * @param {string} message - Human-readable message
+ * @param {Object} [meta={}] - Structured metadata (uid, matchId, amount, etc.)
+ */
+function logEvent(fn, level, message, meta = {}) {
+    const entry = { fn, ...meta };
+    if (meta.uid) entry.uid = meta.uid;
+    functions.logger[level](`[${fn}] ${message}`, entry);
+}
+
+// ─── HTML Escape (shared) ───────────────────────────────────
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
 // ─── Exports ────────────────────────────────────────────────
 
 module.exports = {
     admin,
     db,
     functions,
+    // v1 utilities
+    onCall,
+    onRequest,
+    HttpsError,
+    onSchedule,
+    // Shared helpers
     assertAuth,
     assertAdmin,
+    assertNotBanned,
     sendPush,
     getLudoCommission,
     deductBalance,
     refundPlayer,
     countUserLudoMatches,
-    checkAndCreditReferral
+    checkAndCreditReferral,
+    checkRateLimit,
+    logEvent,
+    escapeHtml
 };

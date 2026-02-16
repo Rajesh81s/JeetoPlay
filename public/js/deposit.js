@@ -36,7 +36,7 @@ async function loadDepositSlabs() {
             const btn = document.createElement('button');
             btn.className = 'btn btn-outline';
             btn.style.cssText = 'padding: 15px; font-size: 1rem;';
-            btn.textContent = '₹' + amount;
+            btn.textContent = '🪙 ' + amount;
             btn.onclick = () => selectDepositAmount(amount);
             container.appendChild(btn);
         });
@@ -47,7 +47,7 @@ async function loadDepositSlabs() {
             const btn = document.createElement('button');
             btn.className = 'btn btn-outline';
             btn.style.cssText = 'padding: 15px; font-size: 1rem;';
-            btn.textContent = '₹' + amount;
+            btn.textContent = '🪙 ' + amount;
             btn.onclick = () => selectDepositAmount(amount);
             container.appendChild(btn);
         });
@@ -62,13 +62,13 @@ function selectDepositAmount(amount) {
 
     // Show selected amount display
     document.getElementById('selected-amount-display').classList.remove('hidden');
-    document.getElementById('display-amount').textContent = '₹' + amount;
+    document.getElementById('display-amount').textContent = '🪙 ' + amount;
 
     // Enable proceed button
     const proceedBtn = document.getElementById('deposit-proceed-btn');
     proceedBtn.disabled = false;
     proceedBtn.style.opacity = '1';
-    proceedBtn.textContent = 'Proceed to Pay ₹' + amount;
+    proceedBtn.textContent = 'Buy ' + amount + ' Coins';
 
     // Highlight selected button
     const btns = document.querySelectorAll('#deposit-slabs button');
@@ -123,7 +123,19 @@ window.proceedToPayment = async () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ amount, mobile: state.userData.phone || "9999999999", order_id: txnId, gateway_type: 'zapupi' })
             });
-            const data = await res.json();
+            if (!res.ok) {
+                const errText = await res.text();
+                console.error('[UPM] ZapUPI API error:', res.status, errText.substring(0, 300));
+                throw new Error('Payment server error (' + res.status + '). Please try again or contact support.');
+            }
+            let data;
+            try {
+                const rawText = await res.text();
+                data = JSON.parse(rawText);
+            } catch (parseErr) {
+                console.error('[UPM] ZapUPI response not valid JSON:', parseErr.message);
+                throw new Error('Payment gateway returned an invalid response. Please try again later.');
+            }
             console.log('[UPM] ZapUPI create-order response:', JSON.stringify(data));
             if (data.status === 'success' && data.payment_url) {
                 console.log('[UPM] autoCheckUrl:', data.auto_check_every_2_sec || 'NOT PROVIDED — using fallback polling');
@@ -136,7 +148,19 @@ window.proceedToPayment = async () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ amount, mobile: state.userData.phone || "9999999999", order_id: txnId, gateway_type: 'custom', gateway_endpoint: config.gateway_endpoint, api_key: config.api_key, secret_key: config.secret_key })
             });
-            const data = await res.json();
+            if (!res.ok) {
+                const errText = await res.text();
+                console.error('[UPM] Custom gateway API error:', res.status, errText.substring(0, 300));
+                throw new Error('Payment server error (' + res.status + '). Please try again or contact support.');
+            }
+            let data;
+            try {
+                const rawText = await res.text();
+                data = JSON.parse(rawText);
+            } catch (parseErr) {
+                console.error('[UPM] Custom gateway response not valid JSON:', parseErr.message);
+                throw new Error('Payment gateway returned an invalid response. Please try again later.');
+            }
             if (data.status === true && data.result && data.result.payment_url) {
                 showUniversalPaymentModal({ paymentUrl: data.result.payment_url, autoCheckUrl: null, orderId: txnId, amount, txnId, config, gateway: 'custom' });
             } else throw new Error(data.message || data.error || "Failed to create order");
@@ -159,6 +183,7 @@ function showManualUpiPayment(config, amount, txnId) {
             <div style="background: var(--bg-hover); padding: 20px; border-radius: 12px; margin-bottom: 20px;">
                 <div style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 10px;">Amount to Pay</div>
                 <div style="font-size: 2rem; font-weight: 700; color: var(--success);">₹${amount}</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">= 🪙 ${amount} coins</div>
             </div>
             
             <div style="background: var(--bg-hover); padding: 15px; border-radius: 12px; margin-bottom: 20px;">
@@ -176,7 +201,7 @@ function showManualUpiPayment(config, amount, txnId) {
                 <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;">
                     <strong>Steps:</strong><br>
                     1. Open any UPI app (PhonePe, GPay, Paytm)<br>
-                    2. Pay ₹${amount} to the above UPI ID<br>
+                    2. Pay ₹${amount} to the above UPI ID (= 🪙 ${amount} coins)<br>
                     3. Enter the UTR/Reference number below
                 </p>
             </div>
@@ -238,7 +263,8 @@ function showUniversalPaymentModal(opts) {
             <div style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);border-radius:24px;padding:30px;max-width:380px;width:100%;border:1px solid rgba(74,222,128,0.3);box-shadow:0 20px 60px rgba(0,0,0,0.5);position:relative;">
                 <!-- Header -->
                 <div style="text-align:center;margin-bottom:20px;">
-                    <div style="font-size:2.5rem;font-weight:700;color:#4ade80;">₹${amount}</div>
+                    <div style="font-size:2.5rem;font-weight:700;color:#4ade80;">🪙 ${amount}</div>
+                    <div style="font-size:0.75rem;color:#6b7280;margin-top:2px;">Pay ₹${amount} via ${gatewayLabel}</div>
                     <div style="font-size:0.8rem;color:#6b7280;margin-top:4px;">via ${gatewayLabel} • #${String(txnId).slice(-6)}</div>
                 </div>
 
@@ -281,7 +307,7 @@ function showUniversalPaymentModal(opts) {
                     <div id="upm-confetti" style="position:absolute;inset:0;pointer-events:none;"></div>
                     <div style="font-size:4rem;margin-bottom:12px;animation:upmBounce 0.6s ease;position:relative;z-index:2;">✅</div>
                     <div style="font-size:1.5rem;font-weight:700;color:#4ade80;margin-bottom:6px;position:relative;z-index:2;">Payment Successful!</div>
-                    <div style="font-size:2.2rem;font-weight:800;color:white;position:relative;z-index:2;">₹${amount} Added</div>
+                    <div style="font-size:2.2rem;font-weight:800;color:white;position:relative;z-index:2;">🪙 ${amount} Coins Added</div>
                     <div style="font-size:0.85rem;color:#6b7280;margin-top:6px;position:relative;z-index:2;">Balance updated automatically</div>
                     <button onclick="closeUniversalPaymentModal()" style="margin-top:20px;padding:12px 40px;background:linear-gradient(135deg,#4ade80,#22c55e);border:none;border-radius:14px;color:#0f172a;font-weight:700;font-size:1rem;cursor:pointer;position:relative;z-index:2;animation:upmFadeIn 0.5s ease 1.5s both;">✓ Done</button>
                 </div>
@@ -358,7 +384,9 @@ function upmStartPolling(autoCheckUrl, txnId, amount, config) {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ auto_check_url: autoCheckUrl })
             });
-            const data = await response.json();
+            if (!response.ok) { console.warn('[UPM AutoCheck] API returned', response.status); return; }
+            let data;
+            try { const rawText = await response.text(); data = JSON.parse(rawText); } catch (pe) { console.warn('[UPM AutoCheck] Non-JSON response'); return; }
             // Log every response for debugging
             if (upmPollCount % 3 === 1) console.log('[UPM AutoCheck #' + upmPollCount + '] Response:', JSON.stringify(data));
 
@@ -370,7 +398,7 @@ function upmStartPolling(autoCheckUrl, txnId, amount, config) {
                 console.log('[UPM AutoCheck] SUCCESS detected!', JSON.stringify(data));
                 clearInterval(upmPollingInterval);
                 await upmCreditWallet(txnId, amount, data.utr || data.data?.utr || data.txn_id || data.data?.txn_id || 'AUTO', 'zapupi');
-            } else if (sl === 'failed' || sl.includes('fail') || pl === 'failed' || innerSl === 'failed') {
+            } else if (pl === 'failed' || innerSl === 'failed') {
                 console.log('[UPM AutoCheck] FAILED detected.', JSON.stringify(data));
                 clearInterval(upmPollingInterval);
                 upmUpdateStatus('Payment failed. Please try again.', 'error');
@@ -393,7 +421,9 @@ function upmStartStatusPolling(orderId, txnId, amount, config) {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ order_id: orderId })
             });
-            const data = await response.json();
+            if (!response.ok) { console.warn('[UPM Poll] API returned', response.status); return; }
+            let data;
+            try { const rawText = await response.text(); data = JSON.parse(rawText); } catch (pe) { console.warn('[UPM Poll] Non-JSON response'); return; }
 
             // Log every 5th poll response for debugging
             if (upmPollCount % 5 === 1) console.log('[UPM Poll #' + upmPollCount + '] Response:', JSON.stringify(data));
@@ -547,7 +577,7 @@ function upmShowSuccess(txnId, amount) {
     // Force-refresh balance from Firebase
     refreshUserBalance();
 
-    showToast(`₹${amount} added to your wallet!`, 'success');
+    showToast(`🪙 ${amount} coins added to your wallet!`, 'success');
     localStorage.removeItem('pending_deposit_txn');
 
     // Close popup if open
@@ -655,7 +685,7 @@ function checkPendingDeposit() {
             if (!txn) { localStorage.removeItem('pending_deposit_txn'); return; }
 
             if (txn.status === 'SUCCESS') {
-                showToast(`₹${txn.amount} deposit was successful!`, 'success');
+                showToast(`🪙 ${txn.amount} deposit was successful!`, 'success');
                 localStorage.removeItem('pending_deposit_txn');
                 if (typeof renderWalletSection === 'function') renderWalletSection();
                 if (typeof updateUIHeader === 'function') updateUIHeader();

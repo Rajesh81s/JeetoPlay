@@ -5,17 +5,38 @@
 
 const {
     functions, admin, db,
-    assertAuth, sendPush, deductBalance
+    onCall, HttpsError,
+    assertAuth, sendPush, deductBalance, checkRateLimit, assertNotBanned, logEvent
 } = require('./helpers');
 
 // ─── Join eSports Match ─────────────────────────────────────
 
-exports.joinEsportsMatch = functions.https.onCall(async (data, context) => {
-    const uid = assertAuth(context);
-    const { matchId, ign, slotsToBook, selectedSlots, gameId } = data;
+exports.joinEsportsMatch = onCall(async (request) => {
+    const uid = assertAuth(request);
+    const { matchId, ign, slotsToBook, selectedSlots, gameId } = request.data;
 
-    if (!matchId) throw new functions.https.HttpsError('invalid-argument', 'matchId required');
-    if (!ign) throw new functions.https.HttpsError('invalid-argument', 'IGN required');
+    // ── Rate limit: max 10 join attempts per 5 minutes ──
+    await checkRateLimit(uid, 'esports_join', 10, 5 * 60 * 1000);
+
+    // ── Server-side ban enforcement ──
+    await assertNotBanned(uid);
+
+    if (!matchId) throw new HttpsError('invalid-argument', 'matchId required');
+    if (!ign) throw new HttpsError('invalid-argument', 'IGN required');
+
+    // Sanitize IGN — strip HTML tags, trim, cap at 30 chars
+    const sanitizeIgn = (val) => {
+        if (typeof val !== 'string') return String(val).substring(0, 30);
+        return val.replace(/<[^>]*>/g, '').trim().substring(0, 30);
+    };
+    let sanitizedIgn;
+    if (Array.isArray(ign)) {
+        sanitizedIgn = ign.map(v => sanitizeIgn(v));
+    } else {
+        sanitizedIgn = sanitizeIgn(ign);
+    }
+
+    logEvent('joinEsportsMatch', 'info', 'Join attempt', { uid, matchId, slotsToBook });
 
     const matchRef = db.ref('esports_matches/' + matchId);
 
@@ -36,12 +57,27 @@ exports.joinEsportsMatch = functions.https.onCall(async (data, context) => {
                 const slotKey = `team_${slot.team}_${slot.position}`;
                 if (match.participants[slotKey]) return; // Slot taken
             }
+
+            // Capacity check: ensure we don't exceed maxParticipants
+            const maxSlots = match.maxParticipants || 100;
+            const currentCount = Object.keys(match.participants).length;
+            if (currentCount + slotsToBook.length > maxSlots) return; // Full
+
+            // Solo match via slotsToBook path: prevent user from booking multiple slots
+            const matchType = (match.type || 'solo').toLowerCase();
+            if (matchType === 'solo' || matchType.includes('solo')) {
+                const alreadyBooked = Object.values(match.participants).some(
+                    p => p.bookedBy === uid
+                );
+                if (alreadyBooked) return; // Already joined
+            }
+
             const timestamp = Date.now();
             slotsToBook.forEach((slot, index) => {
                 const slotKey = `team_${slot.team}_${slot.position}`;
                 match.participants[slotKey] = {
                     bookedBy: uid,
-                    ign: Array.isArray(ign) ? ign[index] : ign,
+                    ign: Array.isArray(sanitizedIgn) ? sanitizedIgn[index] : sanitizedIgn,
                     joinedAt: timestamp,
                     teamNumber: slot.team,
                     slotPosition: slot.position,
@@ -68,7 +104,7 @@ exports.joinEsportsMatch = functions.https.onCall(async (data, context) => {
 
             const nextSlotNum = currentCount + 1;
             match.participants[uid] = {
-                ign: ign,
+                ign: sanitizedIgn,
                 joinedAt: Date.now(),
                 slotNumber: (Array.isArray(selectedSlots) && selectedSlots[0]) || nextSlotNum,
                 slotsBooked: slotsCount,
@@ -83,7 +119,7 @@ exports.joinEsportsMatch = functions.https.onCall(async (data, context) => {
     }, undefined, false); // applyLocally: false — force server read
 
     if (!slotTxn.committed) {
-        throw new functions.https.HttpsError('failed-precondition', 'Slot(s) not available');
+        throw new HttpsError('failed-precondition', 'Slot(s) not available');
     }
 
     const matchData = slotTxn.snapshot.val();
@@ -102,7 +138,7 @@ exports.joinEsportsMatch = functions.https.onCall(async (data, context) => {
         } else {
             await matchRef.child(`participants/${uid}`).remove();
         }
-        throw new functions.https.HttpsError('failed-precondition', `Insufficient balance. Entry fee: ₹${entryFee}`);
+        throw new HttpsError('failed-precondition', `Insufficient balance. Entry fee: 🪙 ${entryFee}`);
     }
 
     // Confirm slots + log transaction
@@ -143,13 +179,13 @@ exports.joinEsportsMatch = functions.https.onCall(async (data, context) => {
 
     // Save IGN for this game
     if (gameId) {
-        await db.ref(`users/${uid}/gameIGNs/${gameId}`).set(Array.isArray(ign) ? ign[0] : ign);
+        await db.ref(`users/${uid}/gameIGNs/${gameId}`).set(Array.isArray(sanitizedIgn) ? sanitizedIgn[0] : sanitizedIgn);
     }
 
     // Push notification: eSports slot booking confirmed
     const gameName = matchData.gameName || matchData.title || 'eSports Match';
     const shortIdE = matchId.slice(-6).toUpperCase();
-    sendPush(uid, `🎯 Slot Confirmed — ${gameName} #${shortIdE}`, `You're in! ₹${entryFee} deducted. Match ID: #${shortIdE}. We'll remind you 30 min before start. Good luck!`, { type: 'ESPORTS_SLOT_BOOKED', matchId }).catch(() => { });
+    sendPush(uid, `🎯 Slot Confirmed — ${gameName} #${shortIdE}`, `You're in! 🪙 ${entryFee} deducted. Match ID: #${shortIdE}. We'll remind you 30 min before start. Good luck!`, { type: 'ESPORTS_SLOT_BOOKED', matchId }).catch(() => { });
 
     return {
         success: true,
