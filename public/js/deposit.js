@@ -103,25 +103,29 @@ window.proceedToPayment = async () => {
         depositState.transactionId = txnId;
         const activeGateway = config.active_gateway || 'manual';
 
-        await db.ref('wallet_transactions/' + txnId).set({
-            userId: state.user.uid,
-            amount: amount,
-            type: 'DEPOSIT',
-            status: 'PENDING',
-            reason: 'Deposit',
-            gateway: activeGateway,
-            created_at: firebase.database.ServerValue.TIMESTAMP,
-            timestamp: firebase.database.ServerValue.TIMESTAMP
-        });
+        // ⚠️ SECURITY: wallet_transactions record is now created SERVER-SIDE
+        // in createPaymentApi (prevents client from tampering with the amount).
+        // For manual gateway, we still create client-side since there's no API call.
 
         if (activeGateway === 'manual') {
+            // Manual UPI: create record client-side (admin verifies manually anyway)
+            await db.ref('wallet_transactions/' + txnId).set({
+                userId: state.user.uid,
+                amount: amount,
+                type: 'DEPOSIT',
+                status: 'PENDING',
+                reason: 'Deposit',
+                gateway: 'manual',
+                created_at: firebase.database.ServerValue.TIMESTAMP,
+                timestamp: firebase.database.ServerValue.TIMESTAMP
+            });
             showManualUpiPayment(config, amount, txnId);
         } else if (activeGateway === 'zapupi') {
             if (!config.zapupi_token) throw new Error('ZapUPI token not configured. Contact admin.');
             const res = await fetch('/api/create_payment', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ amount, mobile: state.userData.phone || "9999999999", order_id: txnId, gateway_type: 'zapupi' })
+                body: JSON.stringify({ amount, mobile: state.userData.phone || "9999999999", order_id: txnId, gateway_type: 'zapupi', userId: state.user.uid })
             });
             if (!res.ok) {
                 const errText = await res.text();
@@ -146,7 +150,7 @@ window.proceedToPayment = async () => {
             const res = await fetch('/api/create_payment', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ amount, mobile: state.userData.phone || "9999999999", order_id: txnId, gateway_type: 'custom', gateway_endpoint: config.gateway_endpoint, api_key: config.api_key, secret_key: config.secret_key })
+                body: JSON.stringify({ amount, mobile: state.userData.phone || "9999999999", order_id: txnId, gateway_type: 'custom', gateway_endpoint: config.gateway_endpoint, api_key: config.api_key, secret_key: config.secret_key, userId: state.user.uid })
             });
             if (!res.ok) {
                 const errText = await res.text();

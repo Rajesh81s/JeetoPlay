@@ -5,6 +5,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>JeetoPlay</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#00E676">
+
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-HL1PMD9EEQ"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag() { dataLayer.push(arguments); }
+        gtag('js', new Date());
+
+        gtag('config', 'G-HL1PMD9EEQ');
+    </script>
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -186,7 +198,9 @@
                     <input type="checkbox" id="signup-age-verify" required
                         style="width: 20px; height: 20px; margin-top: 2px; accent-color: var(--primary); cursor: pointer; flex-shrink: 0;">
                     <span>I confirm that I am <strong style="color: var(--primary);">18 years or older</strong> and
-                        agree to the <a href="#" style="color: var(--primary);">Terms of Service</a> and <a href="#"
+                        agree to the <a href="https://jeetoplay.in/terms.html" target="_blank"
+                            style="color: var(--primary);">Terms of Service</a> and <a
+                            href="https://jeetoplay.in/privacy.html" target="_blank"
                             style="color: var(--primary);">Privacy Policy</a>.</span>
                 </label>
 
@@ -321,7 +335,7 @@
 
                     <!-- Games Grid -->
                     <div id="esports-games-grid"
-                        style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 1.5rem;">
+                        style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 1.5rem;">
                         <!-- Games injected -->
                     </div>
 

@@ -28,10 +28,22 @@ exports.createPaymentApi = onRequest({ cors: true }, async (req, res) => {
     try {
         const {
             amount, mobile, order_id, gateway_type,
-            gateway_endpoint, api_key
+            gateway_endpoint, api_key, userId
         } = req.body;
 
-        functions.logger.info('Payment request:', { gateway_type, amount, order_id });
+        // ⚠️ SECURITY: Validate amount server-side (prevents client tampering)
+        const parsedAmount = parseInt(amount);
+        if (!parsedAmount || parsedAmount <= 0 || !Number.isInteger(parsedAmount)) {
+            return res.status(400).json({ error: 'Invalid amount', status: false });
+        }
+        if (!order_id) {
+            return res.status(400).json({ error: 'Missing order_id', status: false });
+        }
+        if (!userId) {
+            return res.status(400).json({ error: 'Missing userId', status: false });
+        }
+
+        functions.logger.info('Payment request:', { gateway_type, amount: parsedAmount, order_id, userId });
 
         const REDIRECT_URL = 'https://jeetoplay-325f1.web.app/payment-callback.html';
 
@@ -46,10 +58,24 @@ exports.createPaymentApi = onRequest({ cors: true }, async (req, res) => {
                 return res.status(400).json({ error: 'ZapUPI token_key not configured', status: false });
             }
 
+            // ⚠️ SECURITY: Create wallet_transactions record SERVER-SIDE
+            // This prevents clients from tampering with the amount in the DB
+            await db.ref('wallet_transactions/' + String(order_id)).set({
+                userId: userId,
+                amount: parsedAmount,
+                type: 'DEPOSIT',
+                status: 'PENDING',
+                reason: 'Deposit',
+                gateway: 'zapupi',
+                gateway_type: 'zapupi',
+                created_at: admin.database.ServerValue.TIMESTAMP,
+                timestamp: admin.database.ServerValue.TIMESTAMP
+            });
+
             const postData = querystring.stringify({
                 token_key: token_key,
                 secret_key: secret_key,
-                amount: String(amount),
+                amount: String(parsedAmount),
                 order_id: String(order_id),
                 customer_mobile: mobile || '9999999999',
                 redirect_url: REDIRECT_URL,
@@ -96,6 +122,19 @@ exports.createPaymentApi = onRequest({ cors: true }, async (req, res) => {
                 return res.status(400).json({ error: 'Gateway endpoint not configured', status: false });
             }
 
+            // ⚠️ SECURITY: Create wallet_transactions record SERVER-SIDE
+            await db.ref('wallet_transactions/' + String(order_id)).set({
+                userId: userId,
+                amount: parsedAmount,
+                type: 'DEPOSIT',
+                status: 'PENDING',
+                reason: 'Deposit',
+                gateway: 'custom',
+                gateway_type: 'custom',
+                created_at: admin.database.ServerValue.TIMESTAMP,
+                timestamp: admin.database.ServerValue.TIMESTAMP
+            });
+
             const url = new URL(gateway_endpoint);
             const isHttps = url.protocol === 'https:';
 
@@ -103,7 +142,7 @@ exports.createPaymentApi = onRequest({ cors: true }, async (req, res) => {
                 token_key: api_key || '',
                 api_key: api_key || '',
                 secret_key: '',
-                amount: String(amount),
+                amount: String(parsedAmount),
                 order_id: String(order_id),
                 customer_mobile: mobile || '9999999999',
                 redirect_url: REDIRECT_URL,

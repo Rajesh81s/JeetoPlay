@@ -25,12 +25,17 @@ function loadEsportsGames() {
             const el = document.createElement('div');
             el.className = 'game-card';
             el.style.cursor = 'pointer';
-            el.style.textAlign = 'center';
-            el.style.padding = '1rem';
+            el.style.padding = '0';
+            el.style.overflow = 'hidden';
+            el.style.position = 'relative';
+            el.style.borderRadius = '16px';
+            el.style.aspectRatio = '1';
             el.onclick = () => navigateToGameMatches(gameId, game.name, game.icon);
             el.innerHTML = `
-                <img src="${game.icon}" style="width:60px; height:60px; border-radius:12px; object-fit:cover; margin-bottom:8px;">
-                <div style="font-weight:600; font-size:0.9rem;">${game.name}</div>
+                <img src="${game.icon}" style="width:100%; height:100%; object-fit:cover; display:block;">
+                <div style="position:absolute; bottom:0; left:0; right:0; padding:10px 8px 10px; background:linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%); text-align:center;">
+                    <div style="font-weight:700; font-size:0.85rem; color:#fff; text-transform:uppercase; letter-spacing:0.5px; text-shadow: 0 1px 4px rgba(0,0,0,0.5);">${game.name}</div>
+                </div>
             `;
             grid.appendChild(el);
         });
@@ -104,7 +109,8 @@ function loadMatchesList() {
             if (match.status === 'CANCELLED') return;
             if (match.status !== matchFilter) return;
             // Mode filter: skip if mode selected and match.type doesn't match
-            if (modeFilter !== 'ALL' && (match.type || '').toUpperCase() !== modeFilter) return;
+            const normalizedType = (match.type || '').trim().toUpperCase();
+            if (modeFilter !== 'ALL' && normalizedType !== modeFilter) return;
             match.id = child.key;
             matchesArr.push(match);
         });
@@ -143,7 +149,7 @@ function loadMatchesList() {
                     </div>`;
                 } else {
                     statusIndicator = `<div style="margin-top:12px;">
-                        <div style="background:linear-gradient(135deg, #00ff88, #00cc6a); padding:12px 16px; border-radius:10px; text-align:center; cursor:pointer; box-shadow:0 4px 15px rgba(0,255,136,0.25);">
+                        <div onclick="event.stopPropagation(); openSlotModal('${match.id}')" style="background:linear-gradient(135deg, #00ff88, #00cc6a); padding:12px 16px; border-radius:10px; text-align:center; cursor:pointer; box-shadow:0 4px 15px rgba(0,255,136,0.25); transition:transform 0.15s;" onmousedown="this.style.transform='scale(0.97)'" onmouseup="this.style.transform='scale(1)'">
                             <span style="font-size:0.9rem; color:#000; font-weight:700; letter-spacing:0.3px;"><i class="fa-solid fa-bolt"></i> Join Now — 🪙 ${match.entryFee}</span>
                         </div>
                     </div>`;
@@ -154,7 +160,7 @@ function loadMatchesList() {
                     ${hasJoined ? '<span style="font-size:0.75rem; color:var(--text-muted);">Tap for room details →</span>' : ''}
                 </div>`;
             } else if (match.status === 'COMPLETED') {
-                statusIndicator = `<div style="margin-top:10px; padding:10px; background:linear-gradient(135deg, rgba(99,102,241,0.12), rgba(139,92,246,0.08)); border-radius:8px; text-align:center; border:1px solid rgba(99,102,241,0.2);">
+                statusIndicator = `<div onclick="event.stopPropagation(); viewMatchResults('${match.id}')" style="margin-top:10px; padding:10px; background:linear-gradient(135deg, rgba(99,102,241,0.12), rgba(139,92,246,0.08)); border-radius:8px; text-align:center; border:1px solid rgba(99,102,241,0.2); cursor:pointer;">
                     <span style="font-size:0.85rem; color:#8b5cf6; font-weight:700;"><i class="fa-solid fa-trophy"></i> View Results</span>
                 </div>`;
             }
@@ -195,7 +201,7 @@ function loadMatchesList() {
                     </div>
                     <div class="detail-item">
                         <span class="detail-label">TYPE</span>
-                        <div>${match.type} • ${match.map}</div>
+                        <div>${(match.type || 'Solo').toUpperCase()}${match.map ? ' • ' + match.map : ''}</div>
                     </div>
                 </div>
 
@@ -424,26 +430,180 @@ window.viewMatchResults = async function (matchId) {
         // Build participants HTML with rewards
         let playersHtml = '';
         let displayData = [];
+        let teamDisplayData = []; // For team-grouped rendering
+        let myResultHTML = '';
 
         if (isTeamMode) {
+            // ── TEAM MODE: Group participants by team ──
+            const teamGroups = {};
             participantList.forEach(([slotKey, p]) => {
                 const teamMatch = slotKey.match(/team_(\d+)/);
-                const teamNum = teamMatch ? teamMatch[1] : null;
-                const teamResultKey = teamNum ? `team_${teamNum}` : null;
-                const teamResult = teamResultKey ? (results[teamResultKey] || {}) : {};
-
-                const playerData = (teamResult.playerResults || []).find(pr => pr.slotKey === slotKey) || {};
-                const kills = playerData.kills ?? '-';
-
-                const bookerUid = p.bookedBy || slotKey;
-                const bookerData = teamResult.bookerBreakdown?.[bookerUid] || {};
-                const reward = bookerData.creditedAmount || 0;
-
-                const position = teamResult.position || '-';
-
-                displayData.push({ slotKey, p, kills, reward, position, teamNum, bookerUid });
+                const teamNum = teamMatch ? teamMatch[1] : '0';
+                if (!teamGroups[teamNum]) teamGroups[teamNum] = [];
+                teamGroups[teamNum].push({ slotKey, p });
             });
+
+            // Batch-fetch VIP flags
+            const _rVipMap = {};
+            const allUids = participantList.map(([k, p]) => p.bookedBy || k).filter(Boolean);
+            const uniqueUids = [...new Set(allUids)];
+            await Promise.all(uniqueUids.map(async rUid => {
+                try { const s = await db.ref(`users/${rUid}/isVip`).once('value'); _rVipMap[rUid] = s.val() === true; } catch (e) { }
+            }));
+
+            // Build team-level display data
+            Object.keys(teamGroups).forEach(teamNum => {
+                const teamMembers = teamGroups[teamNum];
+                const teamResultKey = `team_${teamNum}`;
+                const teamResult = results[teamResultKey] || {};
+                const position = teamResult.position || 0;
+                const totalKills = teamResult.totalKills || 0;
+                const positionReward = teamResult.positionReward || 0;
+
+                // Calculate total team reward from bookerBreakdown
+                let totalTeamReward = 0;
+                if (teamResult.bookerBreakdown) {
+                    Object.values(teamResult.bookerBreakdown).forEach(b => {
+                        totalTeamReward += (b.creditedAmount || 0);
+                    });
+                }
+
+                // Check if current user is in this team
+                let isMyTeam = false;
+                let myKills = 0;
+                let myReward = 0;
+
+                // Build player entries for this team
+                const players = teamMembers.map(({ slotKey, p }) => {
+                    const playerData = (teamResult.playerResults || []).find(pr => pr.slotKey === slotKey) || {};
+                    const kills = playerData.kills ?? 0;
+                    const bookerUid = p.bookedBy || slotKey;
+                    const isMe = slotKey === uid || bookerUid === uid;
+                    if (isMe) {
+                        isMyTeam = true;
+                        myKills = kills;
+                        // Get this user's reward from bookerBreakdown
+                        const myBookerData = teamResult.bookerBreakdown?.[uid] || {};
+                        myReward = myBookerData.creditedAmount || 0;
+                    }
+                    const vipBadge = _rVipMap[bookerUid] && typeof getVipBadgeHtml === 'function' ? getVipBadgeHtml(true) : '';
+                    return { slotKey, p, kills, bookerUid, isMe, vipBadge, slotPosition: p.slotPosition || '?' };
+                });
+
+                teamDisplayData.push({
+                    teamNum, position, totalKills, positionReward, totalTeamReward, players, isMyTeam, myKills, myReward
+                });
+            });
+
+            // Sort teams by position (ascending), unranked at bottom
+            teamDisplayData.sort((a, b) => {
+                const posA = a.position || 999;
+                const posB = b.position || 999;
+                if (posA !== posB) return posA - posB;
+                return b.totalKills - a.totalKills;
+            });
+
+            // Build "YOUR TEAM RESULT" section
+            const myTeam = teamDisplayData.find(t => t.isMyTeam);
+            if (myTeam) {
+                const myTeamPos = myTeam.position ? '#' + myTeam.position : '–';
+                myResultHTML = `
+                <div style="padding:10px 14px; background:linear-gradient(135deg, rgba(99,102,241,0.12), rgba(139,92,246,0.08)); border-bottom:1px solid var(--border);">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <span style="font-size:0.72rem; color:#818cf8; font-weight:600;">🛡️ YOUR TEAM</span>
+                            <span style="font-size:0.6rem; padding:1px 6px; background:rgba(99,102,241,0.2); border-radius:8px; color:#818cf8;">Team ${myTeam.teamNum}</span>
+                        </div>
+                        <div style="font-weight:700; font-size:0.9rem; color:${myTeam.totalTeamReward > 0 ? '#00ff88' : 'var(--text-muted)'};">${myTeam.totalTeamReward > 0 ? '+🪙 ' + myTeam.totalTeamReward : '🪙 0'}</div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; gap:6px;">
+                        <div style="display:flex; gap:12px; align-items:center;">
+                            <div style="text-align:center;"><div style="font-size:0.58rem; color:var(--text-muted);">RANK</div><div style="font-weight:700; font-size:0.95rem; color:#fff;">${myTeamPos}</div></div>
+                            <div style="text-align:center;"><div style="font-size:0.58rem; color:var(--text-muted);">TEAM K</div><div style="font-weight:700; font-size:0.95rem; color:#ffc107;">${myTeam.totalKills}</div></div>
+                            <div style="text-align:center;"><div style="font-size:0.58rem; color:var(--text-muted);">YOUR K</div><div style="font-weight:700; font-size:0.95rem; color:#818cf8;">${myTeam.myKills}</div></div>
+                        </div>
+                        ${myTeam.myReward > 0 && myTeam.myReward !== myTeam.totalTeamReward ? `<div style="text-align:center;"><div style="font-size:0.58rem; color:rgba(129,140,248,0.7);">YOUR SHARE</div><div style="font-weight:700; font-size:0.85rem; color:#00ff88;">🪙 ${myTeam.myReward}</div></div>` : ''}
+                    </div>
+                </div>
+                `;
+            }
+
+            // Render team cards
+            teamDisplayData.forEach((team) => {
+                const posNum = team.position || 0;
+                const isTop3 = posNum > 0 && posNum <= 3;
+                const isWinner = team.totalTeamReward > 0;
+                const borderColor = team.isMyTeam ? '#6366f1' : isTop3 ? '#ffd700' : isWinner ? '#00ff88' : 'var(--border)';
+                const bgGrad = team.isMyTeam
+                    ? 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.05))'
+                    : isTop3
+                        ? 'linear-gradient(135deg, rgba(255,215,0,0.06), rgba(255,140,0,0.03))'
+                        : isWinner
+                            ? 'linear-gradient(135deg, rgba(0,255,136,0.04), rgba(0,204,106,0.02))'
+                            : 'transparent';
+
+                // Team header
+                const rankDisplay = isTop3 ? (medalMap[String(posNum)] || '#' + posNum) : (posNum > 0 ? '#' + posNum : '–');
+                const rankBg = isTop3 ? 'linear-gradient(135deg, #ffd700, #ff8c00)' : isWinner ? 'linear-gradient(135deg, #00ff88, #00cc6a)' : 'var(--bg-hover)';
+                const rankColor = isTop3 || isWinner ? '#000' : 'var(--text-muted)';
+
+                let teamCardHtml = `
+                <div style="margin:5px 10px; border-radius:12px; border:1px solid ${borderColor}; overflow:hidden; background:${bgGrad};">
+                    <!-- Team Header -->
+                    <div style="display:flex; align-items:center; gap:8px; padding:9px 12px; background:rgba(0,0,0,0.15);">
+                        <div style="width:30px; height:30px; background:${rankBg}; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:${isTop3 ? '0.9rem' : '0.78rem'}; color:${rankColor}; flex-shrink:0;">
+                            ${rankDisplay}
+                        </div>
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-weight:700; font-size:0.85rem; color:#fff;">Team ${team.teamNum}${team.isMyTeam ? ' <span style="font-size:0.55rem; padding:1px 5px; background:rgba(99,102,241,0.25); border-radius:8px; color:#818cf8; margin-left:3px;">YOU</span>' : ''}</div>
+                            <div style="display:flex; gap:8px; margin-top:1px;">
+                                <span style="font-size:0.68rem; color:var(--text-muted);"><i class="fa-solid fa-crosshairs"></i> ${team.totalKills}</span>
+                                <span style="font-size:0.68rem; color:var(--text-muted);"><i class="fa-solid fa-users"></i> ${team.players.length}</span>
+                            </div>
+                        </div>
+                        ${team.totalTeamReward > 0 ? `<div style="color:#00ff88; font-weight:700; font-size:0.9rem; flex-shrink:0;">+🪙 ${team.totalTeamReward}</div>` : '<div style="color:var(--text-muted); font-size:0.8rem; flex-shrink:0;">–</div>'}
+                    </div>
+                    <!-- Player Rows -->
+                    <div style="padding:2px 0;">
+                `;
+
+                team.players.forEach((player) => {
+                    const isMe = player.isMe;
+                    const playerKills = player.kills ?? 0;
+                    teamCardHtml += `
+                        <div style="display:flex; align-items:center; gap:8px; padding:5px 12px; ${isMe ? 'background:rgba(99,102,241,0.1);' : ''}">
+                            <div style="width:18px; height:18px; background:var(--bg-hover); border-radius:3px; display:flex; align-items:center; justify-content:center; font-size:0.6rem; font-weight:600; color:var(--primary); flex-shrink:0;">${player.slotPosition}</div>
+                            <div style="flex:1; min-width:0;">
+                                <span style="font-weight:600; font-size:0.78rem; ${isMe ? 'color:#6366f1;' : 'color:var(--text-main);'}">${escapeHtml(player.p.ign) || 'Player'}</span>
+                                ${player.vipBadge}
+                                ${isMe ? ' <span style="font-size:0.55rem; padding:1px 4px; background:rgba(99,102,241,0.2); border-radius:6px; color:#818cf8;">YOU</span>' : ''}
+                            </div>
+                            <div style="font-size:0.72rem; color:var(--text-muted); flex-shrink:0;"><i class="fa-solid fa-crosshairs" style="font-size:0.6rem;"></i> ${playerKills}</div>
+                        </div>
+                    `;
+                });
+
+                // Team footer with position reward info
+                if (team.positionReward > 0) {
+                    teamCardHtml += `
+                        <div style="padding:4px 12px 5px; border-top:1px solid rgba(255,255,255,0.05);">
+                            <div style="font-size:0.62rem; color:var(--text-muted); display:flex; justify-content:space-between;">
+                                <span>🏆 Pos: 🪙 ${team.positionReward}</span>
+                                <span>Kills: 🪙 ${team.totalKills * (match.perKill || 0)}</span>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                teamCardHtml += `
+                    </div>
+                </div>`;
+
+                playersHtml += teamCardHtml;
+            });
+
         } else {
+            // ── SOLO MODE: Original flat rendering (unchanged) ──
             participantList.forEach(([participantUid, p]) => {
                 const result = results[participantUid] || {};
                 displayData.push({
@@ -456,124 +616,126 @@ window.viewMatchResults = async function (matchId) {
                     bookerUid: participantUid
                 });
             });
-        }
 
-        // Sort by position (best first) or reward (highest first)
-        displayData.sort((a, b) => {
-            const posA = a.position === '-' ? 999 : parseInt(a.position);
-            const posB = b.position === '-' ? 999 : parseInt(b.position);
-            if (posA !== posB) return posA - posB;
-            return (b.reward || 0) - (a.reward || 0);
-        });
+            // Sort by position (best first) or reward (highest first)
+            displayData.sort((a, b) => {
+                const posA = a.position === '-' ? 999 : parseInt(a.position);
+                const posB = b.position === '-' ? 999 : parseInt(b.position);
+                if (posA !== posB) return posA - posB;
+                return (b.reward || 0) - (a.reward || 0);
+            });
 
-        // Find current user's result
-        let myResult = null;
-        displayData.forEach(d => {
-            if (d.slotKey === uid || d.bookerUid === uid) {
-                myResult = d;
+            // Find current user's result
+            let myResult = null;
+            displayData.forEach(d => {
+                if (d.slotKey === uid || d.bookerUid === uid) {
+                    myResult = d;
+                }
+            });
+
+            // Batch-fetch VIP flags for results
+            const _rVipMap = {};
+            const _rUids = displayData.map(d => d.bookerUid || d.slotKey).filter(Boolean);
+            const _rUniqueUids = [...new Set(_rUids)];
+            await Promise.all(_rUniqueUids.map(async rUid => {
+                try { const s = await db.ref(`users/${rUid}/isVip`).once('value'); _rVipMap[rUid] = s.val() === true; } catch (e) { }
+            }));
+
+            displayData.forEach(({ slotKey, p, kills, reward, position, teamNum, bookerUid }, index) => {
+                const isMe = slotKey === uid || bookerUid === uid;
+                const posNum = position !== '-' ? parseInt(position) : null;
+                const isWinner = reward > 0;
+                const isTop3 = posNum && posNum <= 3;
+                const rVipBadge = _rVipMap[bookerUid || slotKey] && typeof getVipBadgeHtml === 'function' ? getVipBadgeHtml(true) : '';
+
+                playersHtml += `
+                    <div style="display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--border); ${isMe ? 'background:rgba(99,102,241,0.12); border-left:3px solid #6366f1;' : isWinner ? 'background:rgba(0,255,136,0.05);' : ''}">
+                        <div style="width:34px; height:34px; background:${isTop3 ? 'linear-gradient(135deg, #ffd700, #ff8c00)' : isWinner ? 'linear-gradient(135deg, #00ff88, #00cc6a)' : 'var(--bg-hover)'}; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:${isTop3 ? '1rem' : '0.85rem'}; color:${isTop3 || isWinner ? '#000' : 'var(--text-muted)'}; flex-shrink:0;">
+                            ${isTop3 ? (medalMap[String(posNum)] || posNum) : (position !== '-' ? position : index + 1)}
+                        </div>
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-weight:600; font-size:0.9rem; ${isMe ? 'color:#6366f1;' : ''}">${escapeHtml(p.ign) || 'Player'} ${rVipBadge}${isMe ? ' <span style="font-size:0.65rem; padding:1px 6px; background:rgba(99,102,241,0.2); border-radius:10px; color:#818cf8;">YOU</span>' : ''}</div>
+                            <div style="display:flex; gap:10px; margin-top:2px;">
+                                ${kills !== '-' ? `<span style="font-size:0.73rem; color:var(--text-muted);"><i class="fa-solid fa-crosshairs"></i> ${kills} kills</span>` : ''}
+                                ${posNum ? `<span style="font-size:0.73rem; color:var(--text-muted);"><i class="fa-solid fa-ranking-star"></i> #${posNum}</span>` : ''}
+                            </div>
+                        </div>
+                        ${reward > 0 ? `<div style="color:#00ff88; font-weight:700; font-size:0.95rem; flex-shrink:0;">+🪙 ${reward}</div>` : '<div style="color:var(--text-muted); font-size:0.85rem; flex-shrink:0;">-</div>'}
+                    </div>
+                `;
+            });
+
+            // Current user's result summary (Solo)
+            if (myResult) {
+                myResultHTML = `
+                    <div style="padding:12px 16px; background:linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.1)); border-bottom:1px solid var(--border);">
+                        <div style="font-size:0.75rem; color:#818cf8; font-weight:600; margin-bottom:6px;">YOUR RESULT</div>
+                        <div style="display:flex; justify-content:space-around; text-align:center;">
+                            <div>
+                                <div style="font-size:0.68rem; color:var(--text-muted);">POSITION</div>
+                                <div style="font-weight:700; font-size:1.1rem;">${myResult.position !== '-' ? '#' + myResult.position : '-'}</div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.68rem; color:var(--text-muted);">KILLS</div>
+                                <div style="font-weight:700; font-size:1.1rem;">${myResult.kills !== '-' ? myResult.kills : '-'}</div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.68rem; color:var(--text-muted);">EARNED</div>
+                                <div style="font-weight:700; font-size:1.1rem; color:${myResult.reward > 0 ? '#00ff88' : 'var(--text-muted)'};">${myResult.reward > 0 ? '+🪙 ' + myResult.reward : '🪙 0'}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
             }
-        });
-
-        // Batch-fetch VIP flags for results
-        const _rVipMap = {};
-        const _rUids = displayData.map(d => d.bookerUid || d.slotKey).filter(Boolean);
-        const _rUniqueUids = [...new Set(_rUids)];
-        await Promise.all(_rUniqueUids.map(async rUid => {
-            try { const s = await db.ref(`users/${rUid}/isVip`).once('value'); _rVipMap[rUid] = s.val() === true; } catch (e) { }
-        }));
-
-        displayData.forEach(({ slotKey, p, kills, reward, position, teamNum, bookerUid }, index) => {
-            const isMe = slotKey === uid || bookerUid === uid;
-            const posNum = position !== '-' ? parseInt(position) : null;
-            const isWinner = reward > 0;
-            const isTop3 = posNum && posNum <= 3;
-            const rVipBadge = _rVipMap[bookerUid || slotKey] && typeof getVipBadgeHtml === 'function' ? getVipBadgeHtml(true) : '';
-
-            playersHtml += `
-                <div style="display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--border); ${isMe ? 'background:rgba(99,102,241,0.12); border-left:3px solid #6366f1;' : isWinner ? 'background:rgba(0,255,136,0.05);' : ''}">
-                    <div style="width:34px; height:34px; background:${isTop3 ? 'linear-gradient(135deg, #ffd700, #ff8c00)' : isWinner ? 'linear-gradient(135deg, #00ff88, #00cc6a)' : 'var(--bg-hover)'}; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:${isTop3 ? '1rem' : '0.85rem'}; color:${isTop3 || isWinner ? '#000' : 'var(--text-muted)'}; flex-shrink:0;">
-                        ${isTop3 ? (medalMap[String(posNum)] || posNum) : (position !== '-' ? position : index + 1)}
-                    </div>
-                    <div style="flex:1; min-width:0;">
-                        <div style="font-weight:600; font-size:0.9rem; ${isMe ? 'color:#6366f1;' : ''}">${escapeHtml(p.ign) || 'Player'} ${rVipBadge}${isMe ? ' <span style="font-size:0.65rem; padding:1px 6px; background:rgba(99,102,241,0.2); border-radius:10px; color:#818cf8;">YOU</span>' : ''}${teamNum ? ` <span style="font-size:0.65rem; color:var(--text-muted);">(Team ${teamNum})</span>` : ''}</div>
-                        <div style="display:flex; gap:10px; margin-top:2px;">
-                            ${kills !== '-' ? `<span style="font-size:0.73rem; color:var(--text-muted);"><i class="fa-solid fa-crosshairs"></i> ${kills} kills</span>` : ''}
-                            ${posNum ? `<span style="font-size:0.73rem; color:var(--text-muted);"><i class="fa-solid fa-ranking-star"></i> #${posNum}</span>` : ''}
-                        </div>
-                    </div>
-                    ${reward > 0 ? `<div style="color:#00ff88; font-weight:700; font-size:0.95rem; flex-shrink:0;">+🪙 ${reward}</div>` : '<div style="color:var(--text-muted); font-size:0.85rem; flex-shrink:0;">-</div>'}
-                </div>
-            `;
-        });
-
-        // Current user's result summary
-        let myResultHTML = '';
-        if (myResult) {
-            myResultHTML = `
-                <div style="padding:12px 16px; background:linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.1)); border-bottom:1px solid var(--border);">
-                    <div style="font-size:0.75rem; color:#818cf8; font-weight:600; margin-bottom:6px;">YOUR RESULT</div>
-                    <div style="display:flex; justify-content:space-around; text-align:center;">
-                        <div>
-                            <div style="font-size:0.68rem; color:var(--text-muted);">POSITION</div>
-                            <div style="font-weight:700; font-size:1.1rem;">${myResult.position !== '-' ? '#' + myResult.position : '-'}</div>
-                        </div>
-                        <div>
-                            <div style="font-size:0.68rem; color:var(--text-muted);">KILLS</div>
-                            <div style="font-weight:700; font-size:1.1rem;">${myResult.kills !== '-' ? myResult.kills : '-'}</div>
-                        </div>
-                        <div>
-                            <div style="font-size:0.68rem; color:var(--text-muted);">EARNED</div>
-                            <div style="font-weight:700; font-size:1.1rem; color:${myResult.reward > 0 ? '#00ff88' : 'var(--text-muted)'};"> ${myResult.reward > 0 ? '+🪙 ' + myResult.reward : '🪙 0'}</div>
-                        </div>
-                    </div>
-                </div>
-            `;
         }
 
         // Show results modal
         const modalHtml = `
-            <div id="match-results-modal" style="position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:1000; display:flex; align-items:center; justify-content:center; padding:16px;">
-                <div style="background: linear-gradient(145deg, #0f1923 0%, #151f2e 50%, #0d1520 100%); border-radius:20px; max-width:420px; width:100%; max-height:88vh; overflow:hidden; display:flex; flex-direction:column; border: 1.5px solid #6366f1; box-shadow: 0 0 60px rgba(0,0,0,0.5), 0 0 20px rgba(99,102,241,0.2);">
-                    <!-- Header -->
-                    <div style="padding:20px; text-align:center; border-bottom:1px solid var(--border);">
-                        <div style="width:50px; height:50px; background:linear-gradient(135deg, #ffd700, #ff8c00); border-radius:50%; display:flex; align-items:center; justify-content:center; margin:0 auto 10px;">
-                            <i class="fa-solid fa-trophy" style="font-size:24px; color:#000;"></i>
+            <div id="match-results-modal" style="position:fixed; inset:0; background:rgba(0,0,0,0.92); z-index:1000; display:flex; align-items:flex-end; justify-content:center; padding:0;">
+                <div style="background: linear-gradient(145deg, #0f1923 0%, #151f2e 50%, #0d1520 100%); border-radius:20px 20px 0 0; max-width:420px; width:100%; max-height:95vh; overflow:hidden; display:flex; flex-direction:column; border: 1.5px solid #6366f1; border-bottom:none; box-shadow: 0 0 60px rgba(0,0,0,0.5), 0 0 20px rgba(99,102,241,0.2);">
+                    <!-- Compact Header -->
+                    <div style="padding:14px 16px 10px; text-align:center; border-bottom:1px solid var(--border);">
+                        <div style="display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:4px;">
+                            <div style="width:32px; height:32px; background:linear-gradient(135deg, #ffd700, #ff8c00); border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                                <i class="fa-solid fa-trophy" style="font-size:15px; color:#000;"></i>
+                            </div>
+                            <div style="text-align:left;">
+                                <h3 style="margin:0; color:#fff; font-size:1rem; line-height:1.2;">${match.title || 'Match Results'}</h3>
+                                <div style="color:var(--text-muted); font-size:0.75rem;">${match.gameName || 'Game'} • ${(match.type || 'Solo')} • ${match.map || 'Map'} • ${new Date(match.dateTime || match.time).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</div>
+                            </div>
                         </div>
-                        <h3 style="margin:0 0 4px; color:#fff; font-size:1.1rem;">${match.title || 'Match Results'}</h3>
-                        <div style="color:var(--text-muted); font-size:0.82rem;">${match.gameName || 'Game'} • ${(match.type || 'Solo')} • ${match.map || 'Map'}</div>
-                        <div style="color:var(--text-muted); font-size:0.75rem; margin-top:4px;">${new Date(match.dateTime || match.time).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
                     </div>
                     
                     <!-- Stats -->
-                    <div style="padding:12px 16px; display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; border-bottom:1px solid var(--border);">
+                    <div style="padding:8px 14px; display:grid; grid-template-columns:repeat(4, 1fr); gap:4px; border-bottom:1px solid var(--border);">
                         <div style="text-align:center;">
-                            <div style="font-size:0.65rem; color:var(--text-muted);">POOL</div>
-                            <div style="font-weight:700; color:#00ff88; font-size:0.9rem;">🪙 ${match.prizePool || 0}</div>
+                            <div style="font-size:0.6rem; color:var(--text-muted);">POOL</div>
+                            <div style="font-weight:700; color:#00ff88; font-size:0.82rem;">🪙 ${match.prizePool || 0}</div>
                         </div>
                         <div style="text-align:center;">
-                            <div style="font-size:0.65rem; color:var(--text-muted);">GIVEN</div>
-                            <div style="font-weight:700; color:var(--primary); font-size:0.9rem;">🪙 ${totalDistributed}</div>
+                            <div style="font-size:0.6rem; color:var(--text-muted);">GIVEN</div>
+                            <div style="font-weight:700; color:var(--primary); font-size:0.82rem;">🪙 ${totalDistributed}</div>
                         </div>
                         <div style="text-align:center;">
-                            <div style="font-size:0.65rem; color:var(--text-muted);">PER KILL</div>
-                            <div style="font-weight:700; color:#ffc107; font-size:0.9rem;">🪙 ${match.perKill || 0}</div>
+                            <div style="font-size:0.6rem; color:var(--text-muted);">PER KILL</div>
+                            <div style="font-weight:700; color:#ffc107; font-size:0.82rem;">🪙 ${match.perKill || 0}</div>
                         </div>
                         <div style="text-align:center;">
-                            <div style="font-size:0.65rem; color:var(--text-muted);">PLAYERS</div>
-                            <div style="font-weight:700; font-size:0.9rem;">${participantList.length}</div>
+                            <div style="font-size:0.6rem; color:var(--text-muted);">${isTeamMode ? 'TEAMS' : 'PLAYERS'}</div>
+                            <div style="font-weight:700; font-size:0.82rem;">${isTeamMode ? teamDisplayData.length : participantList.length}</div>
                         </div>
                     </div>
                     
                     ${myResultHTML}
-                    ${posRewardsHTML}
                     
-                    <!-- Results List -->
-                    <div style="flex:1; overflow-y:auto; padding:0;">
+                    <!-- Scrollable Results (position prizes + team cards) -->
+                    <div style="flex:1; overflow-y:auto; padding:0; -webkit-overflow-scrolling:touch;">
+                        ${posRewardsHTML}
                         ${playersHtml || '<div style="text-align:center; padding:20px; color:var(--text-muted);">No results available yet</div>'}
                     </div>
                     
-                    <div style="padding:14px 16px; border-top:1px solid var(--border);">
-                        <button onclick="document.getElementById('match-results-modal').remove()" style="width:100%; background:linear-gradient(135deg, #6366f1, #8b5cf6); color:#fff; border:none; padding:14px; border-radius:12px; font-weight:700; font-size:1rem; cursor:pointer;">
+                    <div style="padding:10px 14px; border-top:1px solid var(--border);">
+                        <button onclick="document.getElementById('match-results-modal').remove()" style="width:100%; background:linear-gradient(135deg, #6366f1, #8b5cf6); color:#fff; border:none; padding:12px; border-radius:10px; font-weight:700; font-size:0.95rem; cursor:pointer;">
                             Close
                         </button>
                     </div>

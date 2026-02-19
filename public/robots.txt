@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /payment-callback
+
+Sitemap: https://jeetoplay.in/sitemap.xml

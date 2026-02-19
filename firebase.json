@@ -18,6 +18,38 @@
         ],
         "rewrites": [
             {
+                "source": "/app",
+                "destination": "/app.html"
+            },
+            {
+                "source": "/admin",
+                "destination": "/admin_panel.html"
+            },
+            {
+                "source": "/terms",
+                "destination": "/terms.html"
+            },
+            {
+                "source": "/privacy",
+                "destination": "/privacy.html"
+            },
+            {
+                "source": "/refund",
+                "destination": "/refund.html"
+            },
+            {
+                "source": "/contact",
+                "destination": "/contact.html"
+            },
+            {
+                "source": "/payment-callback",
+                "destination": "/payment-callback.html"
+            },
+            {
+                "source": "/download",
+                "destination": "/jeetoplay.apk"
+            },
+            {
                 "source": "/api/create_payment",
                 "function": "createPaymentApi"
             },
@@ -76,6 +108,19 @@
                     {
                         "key": "Cache-Control",
                         "value": "public, max-age=86400"
+                    }
+                ]
+            },
+            {
+                "source": "**/*.apk",
+                "headers": [
+                    {
+                        "key": "Content-Type",
+                        "value": "application/vnd.android.package-archive"
+                    },
+                    {
+                        "key": "Cache-Control",
+                        "value": "no-cache"
                     }
                 ]
             }

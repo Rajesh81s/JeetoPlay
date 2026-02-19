@@ -1814,6 +1814,56 @@
                                 <i class="fa-solid fa-info-circle"></i> <span id="t-lobby-preview-text">100 players → 2
                                     lobbies × 50 → Final → 10 winners</span>
                             </div>
+
+                            <!-- Scoring Config Section -->
+                            <div
+                                style="margin-top: 12px; background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.06)); border: 1px solid rgba(99,102,241,0.15); border-radius: 12px; padding: 14px;">
+                                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                                    <i class="fa-solid fa-bolt" style="color: #a78bfa;"></i>
+                                    <span style="font-weight: 700; font-size: 0.85rem; color: #a78bfa;">Scoring
+                                        Config</span>
+                                    <span
+                                        style="font-size: 0.65rem; padding: 2px 8px; background: rgba(139,92,246,0.15); color: #c4b5fd; border-radius: 10px;">Per
+                                        Round</span>
+                                </div>
+
+                                <div
+                                    style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                                    <div>
+                                        <label
+                                            style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; display: block;">Per
+                                            Kill Point</label>
+                                        <input type="number" id="t-per-kill-point" min="0" max="100" value="1"
+                                            style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-main); font-size: 0.85rem;">
+                                        <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 2px;">
+                                            Points awarded per kill</div>
+                                    </div>
+                                    <div>
+                                        <label
+                                            style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; display: block;">Positions
+                                            to Reward</label>
+                                        <input type="number" id="t-positions-to-reward" min="1" max="100" value="15"
+                                            oninput="updateScoringPositionRows()"
+                                            style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-main); font-size: 0.85rem;">
+                                        <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 2px;">How
+                                            many positions get placement points</div>
+                                    </div>
+                                </div>
+
+                                <div
+                                    style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 6px;">
+                                    Position Points</div>
+                                <div id="t-scoring-position-rows"
+                                    style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; max-height: 200px; overflow-y: auto; padding: 2px;">
+                                    <!-- Dynamically populated by updateScoringPositionRows() -->
+                                </div>
+                                <div
+                                    style="font-size: 0.65rem; color: var(--text-muted); margin-top: 8px; padding: 8px; background: rgba(255,255,255,0.03); border-radius: 6px;">
+                                    <i class="fa-solid fa-calculator" style="color: #a78bfa;"></i>
+                                    <strong>Formula:</strong> Score = (Kills × <span
+                                        id="t-scoring-formula-kill">1</span>) + Position Points
+                                </div>
+                            </div>
                         </div>
 
                         <!-- Row 4: Entry Fee + Commission -->
@@ -2652,15 +2702,26 @@
             style="width: 100%; max-width: 500px; height: 80vh; display: flex; flex-direction: column; position: relative;">
             <button onclick="document.getElementById('games-modal').classList.add('hidden')"
                 style="position: absolute; right: 20px; top: 20px; background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">&times;</button>
-            <h3 style="margin-bottom: 20px;">Manage Games</h3>
+            <h3 id="games-modal-title" style="margin-bottom: 20px;">Manage Games</h3>
 
             <form id="add-game-form"
                 style="margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--border);">
+                <input type="hidden" id="editing-game-id" value="">
+                <div id="game-form-heading"
+                    style="font-weight: 600; font-size: 0.9rem; color: var(--primary); margin-bottom: 12px;">Add New
+                    Game</div>
                 <div class="form-group">
                     <input type="text" id="new-game-name" class="form-input" placeholder="Game Name (e.g. Free Fire)"
                         required>
                 </div>
                 <div class="form-group">
+                    <div id="edit-game-icon-preview"
+                        style="display: none; margin-bottom: 8px; align-items: center; gap: 10px;">
+                        <img id="edit-game-icon-img" src=""
+                            style="width: 40px; height: 40px; border-radius: 8px; object-fit: cover; border: 2px solid var(--border);">
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Current icon (leave fields below
+                            empty to keep)</span>
+                    </div>
                     <input type="url" id="new-game-icon" class="form-input" placeholder="Icon URL (or upload below)">
                     <input type="file" id="new-game-icon-file" accept="image/*"
                         style="margin-top: 8px; font-size: 0.8rem;">
@@ -2672,7 +2733,13 @@
                     <small style="color: var(--text-muted); font-size: 0.7rem;">All matches under this game will show
                         these rules</small>
                 </div>
-                <button type="submit" class="btn btn-success w-full" style="justify-content: center;">Add Game</button>
+                <div style="display: flex; gap: 8px;">
+                    <button type="submit" id="game-form-submit-btn" class="btn btn-success w-full"
+                        style="justify-content: center;">Add Game</button>
+                    <button type="button" id="game-form-cancel-btn" class="btn w-full"
+                        style="justify-content: center; display: none; background: var(--bg-hover); color: var(--text);"
+                        onclick="resetGameForm()">Cancel Edit</button>
+                </div>
             </form>
 
             <div style="flex: 1; overflow-y: auto;" id="games-list">
@@ -3031,9 +3098,9 @@
                     <div class="form-group" style="flex: 1; min-width: 120px;">
                         <label class="form-label">Match Type</label>
                         <select id="edit-match-type" class="form-input">
-                            <option value="Solo">Solo</option>
-                            <option value="Duo">Duo</option>
-                            <option value="Squad">Squad</option>
+                            <option value="SOLO">Solo</option>
+                            <option value="DUO">Duo</option>
+                            <option value="SQUAD">Squad</option>
                         </select>
                     </div>
                     <div class="form-group" style="flex: 1; min-width: 120px;">
@@ -4322,83 +4389,24 @@
 
             showLoader(true);
             try {
-                // Get user data for name
-                const userRef = db.ref('users/' + uid);
-                const userSnap = await userRef.once('value');
-                const pUser = userSnap.val();
-                if (!pUser) throw new Error('User not found');
-
-                // Determine target balance path
-                const balancePath = walletType === 'winning' ? 'winningBalance' : 'depositBalance';
-
-                // ATOMIC: Use transaction to credit/debit the selected wallet
-                const txnResult = await db.ref('users/' + uid + '/' + balancePath).transaction(currentBal => {
-                    const bal = currentBal || 0;
-                    if (action === 'DEBIT' && bal < amount) return; // Abort: insufficient
-                    return action === 'CREDIT' ? (bal + amount) : (bal - amount);
-                });
-
-                if (!txnResult.committed) {
-                    throw new Error(`Insufficient ${walletLabel} balance for debit`);
-                }
-
-                const newBal = txnResult.snapshot.val() || 0;
-                const prevBal = action === 'CREDIT' ? (newBal - amount) : (newBal + amount);
-
-                // Sync walletBalance (total = deposit + winning) — non-blocking
-                try {
-                    await db.ref('users/' + uid + '/walletBalance').transaction(currentTotal => {
-                        const total = currentTotal || 0;
-                        return action === 'CREDIT' ? (total + amount) : Math.max(0, total - amount);
-                    });
-                } catch (syncErr) {
-                    console.warn('walletBalance sync failed (non-critical):', syncErr.message);
-                }
-
-                // Create audit record in deposits (for deposit wallet) or wallet_transactions (for both)
-                if (walletType === 'deposit') {
-                    // Deposit wallet: create deposit record for audit trail
-                    const depositId = db.ref('deposits').push().key;
-                    await db.ref('deposits/' + depositId).set({
-                        userId: uid,
-                        userName: pUser.fullName || pUser.username || 'User',
-                        amount: amount,
-                        source: 'ADMIN',
-                        status: 'SUCCESS',
-                        createdAt: firebase.database.ServerValue.TIMESTAMP,
-                        completedAt: firebase.database.ServerValue.TIMESTAMP,
-                        adminId: state.currentUser.uid,
-                        adminName: state.currentUser.username,
-                        reason: reason,
-                        balanceBefore: prevBal,
-                        balanceAfter: newBal
-                    });
-                }
-
-                // Log Transaction (Wallet Log) - universal for both wallet types
-                const txnId = db.ref('wallet_transactions').push().key;
-                await db.ref('wallet_transactions/' + txnId).set({
-                    userId: uid,
-                    userName: pUser.fullName || pUser.username || 'User',
+                // Secure Cloud Function call — handles atomic balance update,
+                // audit records, and transaction logging server-side
+                const adminWalletUpdateFn = functions.httpsCallable('adminWalletUpdate');
+                const result = await adminWalletUpdateFn({
+                    targetUid: uid,
                     amount: amount,
-                    type: action,
-                    isCredit: action === 'CREDIT',
+                    action: action,
                     walletType: walletType,
-                    status: 'SUCCESS',
-                    reason: reason,
-                    description: `Admin ${action} (${walletLabel}): ₹${amount}`,
-                    balanceBefore: prevBal,
-                    balanceAfter: newBal,
-                    timestamp: firebase.database.ServerValue.TIMESTAMP,
-                    adminId: state.currentUser.uid,
-                    adminName: state.currentUser.username
+                    reason: reason
                 });
 
-                // Log Admin Action (Audit Log)
+                const r = result.data;
+
+                // Log Admin Action (local audit log)
                 logAdminAction('WALLET_UPDATE', uid, `${action} ₹${amount} [${walletLabel} Wallet] - ${reason}`);
 
                 // Show success toast
-                showAdminToast(`✅ ${action === 'CREDIT' ? 'Credited' : 'Debited'} ₹${amount} ${action === 'CREDIT' ? 'to' : 'from'} ${walletLabel} wallet. New ${walletLabel}: ₹${newBal}`, 'success');
+                showAdminToast(`✅ ${actionLabel}ed ₹${amount} ${action === 'CREDIT' ? 'to' : 'from'} ${walletLabel} wallet. New ${walletLabel}: ₹${r.newBalance}`, 'success');
                 document.getElementById('wallet-modal').classList.add('hidden');
                 e.target.reset();
 
@@ -4409,7 +4417,9 @@
                 updateWalletTypeUI();
 
             } catch (err) {
-                showAdminToast('❌ Error: ' + err.message, 'error');
+                // Extract meaningful error message from Cloud Function errors
+                const msg = err.message || 'Unknown error';
+                showAdminToast('❌ Error: ' + msg, 'error');
             } finally {
                 showLoader(false);
             }
@@ -5135,7 +5145,7 @@
                 document.getElementById('edit-match-id').value = matchId;
                 document.getElementById('edit-match-id-display').textContent = 'ID: ' + matchId;
                 document.getElementById('edit-match-title').value = match.title || '';
-                document.getElementById('edit-match-type').value = match.type || 'Solo';
+                document.getElementById('edit-match-type').value = (match.type || 'SOLO').toUpperCase();
                 document.getElementById('edit-match-map').value = match.map || '';
                 document.getElementById('edit-match-entry-fee').value = match.entryFee || 0;
                 document.getElementById('edit-match-prize').value = match.prizePool || 0;
@@ -5465,6 +5475,7 @@
 
         // Games Management
         window.openGamesModal = () => {
+            resetGameForm(); // Clear any stale edit state
             document.getElementById('games-modal').classList.remove('hidden');
             loadGamesList();
         };
@@ -5509,8 +5520,23 @@
             });
         }
 
+        // Reset game form to add mode
+        window.resetGameForm = () => {
+            document.getElementById('editing-game-id').value = '';
+            document.getElementById('new-game-name').value = '';
+            document.getElementById('new-game-icon').value = '';
+            document.getElementById('new-game-icon-file').value = '';
+            document.getElementById('new-game-rules').value = '';
+            document.getElementById('game-form-heading').textContent = 'Add New Game';
+            document.getElementById('game-form-submit-btn').textContent = 'Add Game';
+            document.getElementById('game-form-submit-btn').className = 'btn btn-success w-full';
+            document.getElementById('game-form-cancel-btn').style.display = 'none';
+            document.getElementById('edit-game-icon-preview').style.display = 'none';
+        };
+
         document.getElementById('add-game-form').addEventListener('submit', async (e) => {
             e.preventDefault();
+            const editingId = document.getElementById('editing-game-id').value;
             const name = document.getElementById('new-game-name').value.trim();
             const iconUrl = document.getElementById('new-game-icon').value.trim();
             const iconFile = document.getElementById('new-game-icon-file').files[0];
@@ -5518,31 +5544,54 @@
 
             if (!name) return alert('Game name is required');
 
-            // Handle icon - URL or file upload (upload to Firebase Storage)
-            let icon = iconUrl;
-            const newKey = db.ref('esports_games').push().key;
-            if (iconFile && !iconUrl) {
-                // Upload file to Firebase Storage instead of base64
-                const ext = iconFile.name.split('.').pop().toLowerCase() || 'png';
-                const storagePath = `game_icons/${newKey}.${ext}`;
-                const storageRef = window.fbStorage.ref(storagePath);
-                await storageRef.put(iconFile, { contentType: iconFile.type });
-                icon = await storageRef.getDownloadURL();
+            if (editingId) {
+                // ===== EDIT MODE =====
+                const updates = { name: name, rules: rules || '' };
+
+                // Handle icon change: new file upload, new URL, or keep existing
+                if (iconFile) {
+                    const ext = iconFile.name.split('.').pop().toLowerCase() || 'png';
+                    const storagePath = `game_icons/${editingId}.${ext}`;
+                    const storageRef = window.fbStorage.ref(storagePath);
+                    await storageRef.put(iconFile, { contentType: iconFile.type });
+                    updates.icon = await storageRef.getDownloadURL();
+                } else if (iconUrl) {
+                    updates.icon = iconUrl;
+                }
+                // If neither file nor URL provided, icon stays unchanged (not included in updates)
+
+                updates.updatedAt = firebase.database.ServerValue.TIMESTAMP;
+
+                await db.ref('esports_games/' + editingId).update(updates);
+                logAdminAction('EDIT_GAME', editingId, `Edited game: ${name}`);
+                showAdminToast('Game updated successfully!', 'success');
+                resetGameForm();
+            } else {
+                // ===== ADD MODE =====
+                let icon = iconUrl;
+                const newKey = db.ref('esports_games').push().key;
+                if (iconFile && !iconUrl) {
+                    const ext = iconFile.name.split('.').pop().toLowerCase() || 'png';
+                    const storagePath = `game_icons/${newKey}.${ext}`;
+                    const storageRef = window.fbStorage.ref(storagePath);
+                    await storageRef.put(iconFile, { contentType: iconFile.type });
+                    icon = await storageRef.getDownloadURL();
+                }
+
+                if (!icon) return alert('Please provide an icon URL or upload an image');
+
+                await safeWrite('esports_games/' + newKey, {
+                    name: name,
+                    icon: icon,
+                    rules: rules || '',
+                    isActive: true,
+                    createdAt: firebase.database.ServerValue.TIMESTAMP,
+                    createdBy: state.currentUser.uid
+                }, 'ADD_GAME', `Added game: ${name}`);
+
+                e.target.reset();
+                document.getElementById('new-game-icon-file').value = '';
             }
-
-            if (!icon) return alert('Please provide an icon URL or upload an image');
-
-            await safeWrite('esports_games/' + newKey, {
-                name: name,
-                icon: icon,
-                rules: rules || '',
-                isActive: true,
-                createdAt: firebase.database.ServerValue.TIMESTAMP,
-                createdBy: state.currentUser.uid
-            }, 'ADD_GAME', `Added game: ${name}`);
-
-            e.target.reset();
-            document.getElementById('new-game-icon-file').value = '';
         });
 
         window.deleteGame = (id) => {
@@ -5550,28 +5599,37 @@
             safeWrite('esports_games/' + id, null, 'DELETE_GAME', 'Deleted a game');
         };
 
-        // Edit Game
+        // Edit Game — populate form with existing data
         window.editGame = async (gameId) => {
             const snap = await db.ref('esports_games/' + gameId).once('value');
             const game = snap.val();
             if (!game) return alert('Game not found');
 
-            const newName = prompt('Edit Game Name:', game.name);
-            if (newName === null) return; // Cancelled
+            // Switch form to edit mode
+            document.getElementById('editing-game-id').value = gameId;
+            document.getElementById('new-game-name').value = game.name || '';
+            document.getElementById('new-game-icon').value = '';
+            document.getElementById('new-game-icon-file').value = '';
+            document.getElementById('new-game-rules').value = game.rules || '';
 
-            const newIcon = prompt('Edit Icon URL (leave empty to keep current):', game.icon);
-            const newRules = prompt('Edit Rules (leave empty to keep current):', game.rules || '');
-
-            const updates = {};
-            if (newName && newName !== game.name) updates.name = newName;
-            if (newIcon && newIcon !== game.icon) updates.icon = newIcon;
-            if (newRules !== null && newRules !== game.rules) updates.rules = newRules;
-
-            if (Object.keys(updates).length > 0) {
-                await db.ref('esports_games/' + gameId).update(updates);
-                logAdminAction('EDIT_GAME', gameId, `Edited game: ${newName || game.name}`);
-                alert('Game updated successfully!');
+            // Show current icon preview
+            const preview = document.getElementById('edit-game-icon-preview');
+            const previewImg = document.getElementById('edit-game-icon-img');
+            if (game.icon) {
+                previewImg.src = game.icon;
+                preview.style.display = 'flex';
+            } else {
+                preview.style.display = 'none';
             }
+
+            // Update form heading & buttons
+            document.getElementById('game-form-heading').textContent = '✏️ Editing: ' + (game.name || 'Game');
+            document.getElementById('game-form-submit-btn').textContent = 'Save Changes';
+            document.getElementById('game-form-submit-btn').className = 'btn btn-primary w-full';
+            document.getElementById('game-form-cancel-btn').style.display = 'flex';
+
+            // Scroll form into view
+            document.getElementById('add-game-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
         };
 
         // Match Details & Winner Declaration
@@ -8930,6 +8988,26 @@
                 document.getElementById('t-lobby-rounds').value = t.totalRounds || 2;
                 document.getElementById('t-lobby-size').value = t.lobbySize || 50;
                 document.getElementById('t-winners-count').value = t.winnersCount || 3;
+
+                // Scoring config pre-fill
+                if (t.scoringConfig) {
+                    document.getElementById('t-per-kill-point').value = t.scoringConfig.perKillPoint ?? 1;
+                    document.getElementById('t-positions-to-reward').value = Object.keys(t.scoringConfig.positionPoints || {}).length || 15;
+                    updateScoringPositionRows();
+                    // Fill position values after rows are generated
+                    setTimeout(() => {
+                        document.querySelectorAll('#t-scoring-position-rows .t-pos-point-input').forEach(inp => {
+                            const pos = inp.dataset.pos;
+                            if (t.scoringConfig.positionPoints?.[pos] !== undefined) {
+                                inp.value = t.scoringConfig.positionPoints[pos];
+                            }
+                        });
+                    }, 50);
+                } else {
+                    document.getElementById('t-per-kill-point').value = 1;
+                    document.getElementById('t-positions-to-reward').value = 15;
+                    updateScoringPositionRows();
+                }
             }
 
             // Prize distribution (percentages)
@@ -8975,6 +9053,7 @@
                 lobbyFields.style.display = 'block';
                 bracketInfo.style.display = 'none';
                 document.getElementById('t-max-participants').max = 1000;
+                updateScoringPositionRows();
             } else {
                 lobbyFields.style.display = 'none';
                 bracketInfo.style.display = 'block';
@@ -8983,6 +9062,44 @@
             updateWinnerPrizeRows();
             updateTournamentPreview();
         };
+
+        // --- Dynamic scoring position rows ---
+        window.updateScoringPositionRows = () => {
+            const count = parseInt(document.getElementById('t-positions-to-reward').value) || 15;
+            const container = document.getElementById('t-scoring-position-rows');
+            if (!container) return;
+
+            // Preserve existing values
+            const existingValues = {};
+            container.querySelectorAll('.t-pos-point-input').forEach(inp => {
+                existingValues[inp.dataset.pos] = inp.value;
+            });
+
+            let html = '';
+            for (let i = 1; i <= count; i++) {
+                const defaultVal = Math.max(1, count - i + 1); // Decreasing: count, count-1, ... 1
+                const val = existingValues[i] !== undefined ? existingValues[i] : defaultVal;
+                const posLabel = i === 1 ? '🥇 1st' : i === 2 ? '🥈 2nd' : i === 3 ? '🥉 3rd' : `#${i}`;
+                const posColor = i <= 3 ? '#fbbf24' : i <= 5 ? '#a78bfa' : '#64748b';
+                html += `
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="min-width: 40px; font-size: 0.72rem; color: ${posColor}; font-weight: 600;">${posLabel}</span>
+                        <input type="number" class="t-pos-point-input" data-pos="${i}" min="0" max="999" value="${val}"
+                            style="flex: 1; padding: 5px 8px; text-align: center; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text-main); font-size: 0.78rem; min-width: 50px;">
+                    </div>`;
+            }
+            container.innerHTML = html;
+
+            // Update formula display
+            const killPtEl = document.getElementById('t-scoring-formula-kill');
+            if (killPtEl) killPtEl.textContent = document.getElementById('t-per-kill-point').value || '1';
+        };
+
+        // Update formula display when kill point changes
+        document.getElementById('t-per-kill-point')?.addEventListener('input', () => {
+            const killPtEl = document.getElementById('t-scoring-formula-kill');
+            if (killPtEl) killPtEl.textContent = document.getElementById('t-per-kill-point').value || '1';
+        });
 
         // --- Dynamic prize row generation ---
         const PRIZE_CONFIG = {
@@ -9220,6 +9337,16 @@
                     tournamentData.totalRounds = parseInt(document.getElementById('t-lobby-rounds').value) || 2;
                     tournamentData.winnersCount = parseInt(document.getElementById('t-winners-count').value) || 3;
                     if (!isEditing) tournamentData.lobbies = {};
+
+                    // Scoring config
+                    const perKillPoint = parseInt(document.getElementById('t-per-kill-point').value) || 1;
+                    const positionPoints = {};
+                    document.querySelectorAll('#t-scoring-position-rows .t-pos-point-input').forEach(inp => {
+                        const pos = parseInt(inp.dataset.pos);
+                        const pts = parseInt(inp.value) || 0;
+                        if (pts > 0) positionPoints[pos] = pts;
+                    });
+                    tournamentData.scoringConfig = { perKillPoint, positionPoints };
                 } else {
                     // 1v1 Bracket-specific fields
                     const bracketSize = Math.pow(2, Math.ceil(Math.log2(maxParticipants)));
@@ -9822,7 +9949,8 @@
                             <h4 style="margin: 0; font-size: 1rem;">Round ${round} of ${t.totalRounds || 2}</h4>
                             <span style="font-size: 0.75rem; color: var(--text-muted);">${lobbyEntries.length} ${lobbyEntries.length === 1 ? 'lobby' : 'lobbies'} • ${totalPlayersThisRound} players</span>
                         </div>
-                        <div style="display: flex; gap: 8px;">
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            ${t.scoringConfig ? `<span style="font-size: 0.7rem; padding: 4px 10px; background: rgba(139,92,246,0.12); color: #c4b5fd; border-radius: 20px;"><i class="fa-solid fa-bolt"></i> Kill: ${t.scoringConfig.perKillPoint || 1}pt • ${Object.keys(t.scoringConfig.positionPoints || {}).length} pos rewarded</span>` : ''}
                             ${isLastRound ? '' : `<span style="font-size: 0.75rem; padding: 4px 10px; background: rgba(77,208,225,0.15); color: #4dd0e1; border-radius: 20px;">Top ${advancePerLobby} advance per lobby</span>`}
                             <span style="font-size: 0.75rem; padding: 4px 10px; background: rgba(0,255,136,0.15); color: #00ff88; border-radius: 20px;">${isLastRound ? 'FINAL ROUND' : `${round}/${t.totalRounds}`}</span>
                         </div>
@@ -9952,6 +10080,11 @@
             let valid = true;
             const placements = new Set();
 
+            // Resolve scoring config once (outside loop for efficiency)
+            const scoringConfig = t.scoringConfig || null;
+            const perKillPt = scoringConfig?.perKillPoint || 1;
+            const posPoints = scoringConfig?.positionPoints || {};
+
             for (const [uid] of players) {
                 const killsEl = document.getElementById(`kills-${tournamentId}-${lobbyKey}-${uid}`);
                 const placementEl = document.getElementById(`placement-${tournamentId}-${lobbyKey}-${uid}`);
@@ -9976,8 +10109,16 @@
                 }
                 placements.add(placement);
 
-                // Score = kills + (lobbySize - placement) — rewards both kills and survival
-                const score = kills + (lobbyPlayerCount - placement);
+                // Calculate score using admin-configured scoring or legacy formula
+                let score;
+                if (scoringConfig) {
+                    const killPoints = kills * perKillPt;
+                    const placementPoints = Number(posPoints[placement]) || 0;
+                    score = killPoints + placementPoints;
+                } else {
+                    // Backward compat for old tournaments without scoring config
+                    score = kills + (lobbyPlayerCount - placement);
+                }
                 results[uid] = { kills, placement, score };
             }
 

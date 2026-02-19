@@ -122,11 +122,11 @@ window.shareApp = function () {
 };
 
 window.openTerms = function () {
-    window.open('landing.html#terms', '_blank');
+    window.open('https://jeetoplay.in/terms.html', '_blank');
 };
 
 window.openPrivacy = function () {
-    window.open('landing.html#privacy', '_blank');
+    window.open('https://jeetoplay.in/privacy.html', '_blank');
 };
 
 // Switch between eSports and Ludo on homepage

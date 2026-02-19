@@ -88,7 +88,7 @@ exports.adminLogin = onCall(async (request) => {
 
 exports.adminWalletUpdate = onCall(async (request) => {
     const adminUid = await assertAdmin(request);
-    const { targetUid, amount, action, reason } = request.data;
+    const { targetUid, amount, action, reason, walletType } = request.data;
 
     if (!targetUid || !amount || amount <= 0) {
         throw new HttpsError('invalid-argument', 'targetUid and positive amount required');
@@ -97,54 +97,68 @@ exports.adminWalletUpdate = onCall(async (request) => {
         throw new HttpsError('invalid-argument', 'action must be CREDIT or DEBIT');
     }
 
+    // Determine which balance field to update (default: deposit for backward compat)
+    const isWinning = walletType === 'winning';
+    const balanceField = isWinning ? 'winningBalance' : 'depositBalance';
+    const walletLabel = isWinning ? 'Winning' : 'Deposit';
+
     // Get user info
     const userSnap = await db.ref('users/' + targetUid).once('value');
     const pUser = userSnap.val();
     if (!pUser) throw new HttpsError('not-found', 'User not found');
 
     // Atomic balance update — single user transaction for consistency
+    // Admin can debit into negative (for penalties, corrections, etc.)
     const txn = await db.ref(`users/${targetUid}`).transaction(user => {
         if (!user) return user;
-        const depBal = user.depositBalance || 0;
-        if (action === 'DEBIT' && depBal < amount) return; // Abort
-        user.depositBalance = action === 'CREDIT' ? depBal + amount : depBal - amount;
+        const currentBal = user[balanceField] || 0;
+        user[balanceField] = action === 'CREDIT' ? currentBal + amount : currentBal - amount;
         user.walletBalance = (user.depositBalance || 0) + (user.winningBalance || 0);
         return user;
     }, undefined, false);
 
     if (!txn.committed) {
-        throw new HttpsError('failed-precondition', 'Insufficient deposit balance');
+        throw new HttpsError('failed-precondition', 'Transaction failed — please retry');
     }
 
     const userAfterUpdate = txn.snapshot.val();
-    const newBal = userAfterUpdate.depositBalance || 0;
+    const newBal = userAfterUpdate[balanceField] || 0;
     const oldBal = action === 'CREDIT' ? newBal - amount : newBal + amount;
 
-    // Deposit record
-    const depositKey = db.ref('deposits').push().key;
-    await db.ref('deposits/' + depositKey).set({
-        userId: targetUid,
-        userName: pUser.fullName || pUser.username || 'User',
-        amount, source: 'ADMIN', status: 'SUCCESS',
-        createdAt: admin.database.ServerValue.TIMESTAMP,
-        completedAt: admin.database.ServerValue.TIMESTAMP,
-        adminId: adminUid,
-        reason: reason || '',
-        balanceBefore: oldBal,
-        balanceAfter: newBal
-    });
+    // Deposit record (for deposit wallet operations — keeps existing admin audit trail)
+    if (!isWinning) {
+        const depositKey = db.ref('deposits').push().key;
+        await db.ref('deposits/' + depositKey).set({
+            userId: targetUid,
+            userName: pUser.fullName || pUser.username || 'User',
+            amount, source: 'ADMIN', status: 'SUCCESS',
+            createdAt: admin.database.ServerValue.TIMESTAMP,
+            completedAt: admin.database.ServerValue.TIMESTAMP,
+            adminId: adminUid,
+            reason: reason || '',
+            balanceBefore: oldBal,
+            balanceAfter: newBal
+        });
+    }
 
-    // Wallet transaction
+    // Wallet transaction — universal audit record for both wallet types
     const txnKey = db.ref('wallet_transactions').push().key;
     await db.ref('wallet_transactions/' + txnKey).set({
         userId: targetUid,
+        userName: pUser.fullName || pUser.username || 'User',
         amount, type: action,
+        isCredit: action === 'CREDIT',
+        walletType: isWinning ? 'winning' : 'deposit',
+        status: 'SUCCESS',
         reason: reason || '',
+        description: `Admin ${action} (${walletLabel}): ₹${amount}`,
+        balanceBefore: oldBal,
+        balanceAfter: newBal,
         timestamp: admin.database.ServerValue.TIMESTAMP,
         adminId: adminUid
     });
 
-    return { success: true, newBalance: newBal };
+    return { success: true, newBalance: newBal, walletType: isWinning ? 'winning' : 'deposit' };
 });
 
 // ─── Admin Reject Withdrawal (with refund) ──────────────────
