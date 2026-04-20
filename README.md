@@ -16,11 +16,11 @@
 
 ---
 
-## 💡 The Story: Surviving a $50,000 Cloud Bill
+## 💡 The Story: Surviving a ₹45,000 Cloud Bill
 
 Within 72 hours of launching, JeetoPlay went viral — scaling to **4,000 active users**. The initial architecture relied entirely on Firebase Realtime Database (RTDB) and Cloud Functions for everything: wallets, matchmaking, leaderboards, and authentication.
 
-**What broke:** Thousands of concurrent RTDB listeners combined with Cloud Function cold-starts triggered an explosion of billable operations, resulting in a **$50,000 Firebase bill in just 3 days**.
+**What broke:** Thousands of concurrent RTDB listeners combined with Cloud Function cold-starts triggered an explosion of billable operations, resulting in a **₹45,000 Firebase bill in just 3 days**.
 
 **How I fixed it:** I re-architected the entire platform under production pressure:
 
