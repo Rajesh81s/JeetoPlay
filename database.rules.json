@@ -1,0 +1,268 @@
+{
+    "rules": {
+        "admins": {
+            ".read": "auth != null",
+            ".write": "root.child('admins').child(auth.uid).exists()"
+        },
+        "moderators": {
+            ".read": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+            ".write": "root.child('admins').child(auth.uid).exists()"
+        },
+        "admin_permissions": {
+            "$uid": {
+                ".read": "auth.uid === $uid || root.child('admins').child(auth.uid).exists()",
+                ".write": "root.child('admins').child(auth.uid).exists()"
+            }
+        },
+        "users": {
+            ".read": "auth != null",
+            ".indexOn": [
+                "mobile",
+                "email",
+                "username",
+                "userId",
+                "referralCode"
+            ],
+            "$uid": {
+                ".read": "auth.uid === $uid || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+                ".write": "auth.uid === $uid || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+                "depositBalance": {
+                    ".validate": "newData.isNumber() && (newData.val() >= 0 || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()) && ((!data.exists() && auth.uid === $uid && newData.val() === 0) || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists())"
+                },
+                "winningBalance": {
+                    ".validate": "newData.isNumber() && (newData.val() >= 0 || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()) && ((!data.exists() && auth.uid === $uid && newData.val() === 0) || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists())"
+                },
+                "walletBalance": {
+                    ".validate": "newData.isNumber() && (newData.val() >= 0 || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()) && ((!data.exists() && auth.uid === $uid && newData.val() === 0) || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists())"
+                },
+                "photoURL": {
+                    ".validate": "newData.isString() && newData.val().length <= 500"
+                }
+            }
+        },
+        "wallet_transactions": {
+            ".read": "auth != null",
+            ".indexOn": [
+                "userId",
+                "withdrawalId",
+                "tranzupi_order_id"
+            ],
+            "$txnId": {
+                ".write": "auth != null && (!data.exists() || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists() || (data.child('userId').val() === auth.uid && data.child('status').val() === 'PENDING'))"
+            }
+        },
+        "esports_games": {
+            ".read": true,
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+        },
+        "esports_matches": {
+            ".read": true,
+            ".indexOn": [
+                "status",
+                "gameId",
+                "gameName",
+                "createdAt"
+            ],
+            "$matchId": {
+                ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+                "status": {
+                    ".validate": "newData.val() === 'UPCOMING' || newData.val() === 'OPEN' || newData.val() === 'LIVE' || newData.val() === 'IN_PROGRESS' || newData.val() === 'COMPLETED' || newData.val() === 'CANCELLED' || newData.val() === 'RESULTS_PROCESSING' || newData.val() === 'RESULTS_DECLARED'"
+                }
+            }
+        },
+        "ludo_matches": {
+            ".read": "auth != null",
+            ".indexOn": [
+                "status",
+                "creator/uid",
+                "acceptor/uid"
+            ],
+            "$matchId": {
+                ".write": "auth != null && (!data.exists() || data.child('creator/uid').val() === auth.uid || data.child('acceptor/uid').val() === auth.uid || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists())",
+                "status": {
+                    ".validate": "newData.val() === 'OPEN' || newData.val() === 'PAIRED' || newData.val() === 'ROOM_SHARED' || newData.val() === 'IN_PROGRESS' || newData.val() === 'DISPUTED' || newData.val() === 'COMPLETED' || newData.val() === 'CANCELLED' || newData.val() === 'CANCELLING' || newData.val() === 'EXPIRING' || newData.val() === 'EXPIRED' || newData.val() === 'REMATCH_PENDING' || newData.val() === 'ACCEPTING_REMATCH' || newData.val() === 'COMPLETING'"
+                }
+            }
+        },
+        "ludo_ai_matches": {
+            ".read": "auth != null",
+            ".indexOn": [
+                "uid",
+                "status"
+            ],
+            "$matchId": {
+                ".write": "auth != null && (!data.exists() || data.child('uid').val() === auth.uid || root.child('admins').child(auth.uid).exists())",
+                "status": {
+                    ".validate": "newData.val() === 'IN_PROGRESS' || newData.val() === 'COMPLETED'"
+                }
+            }
+        },
+        "ludo_queue": {
+            "$amount": {
+                ".read": "auth != null",
+                ".indexOn": [
+                    "status",
+                    "timestamp"
+                ],
+                "$entryId": {
+                    ".write": "auth != null && (!data.exists() || data.child('uid').val() === auth.uid || (data.child('status').val() === 'waiting' && newData.child('status').val() === 'matched') || data.child('matchedWith').val() === auth.uid)",
+                    ".validate": "newData.hasChildren(['uid', 'timestamp', 'status'])"
+                }
+            }
+        },
+        "ludo_rooms": {
+            "$matchId": {
+                ".read": "auth != null && (data.child('redUid').val() === auth.uid || data.child('blueUid').val() === auth.uid)",
+                ".write": "auth != null && (data.child('redUid').val() === auth.uid || data.child('blueUid').val() === auth.uid)"
+            }
+        },
+        "disputes": {
+            ".read": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+            "$disputeId": {
+                ".write": "auth != null && !data.exists()"
+            }
+        },
+        "home_slider": {
+            ".read": true,
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+        },
+        "announcement_bar": {
+            ".read": true,
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+        },
+        "announcement_history": {
+            ".read": true,
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+        },
+        "platform_stats": {
+            ".read": "auth != null",
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+        },
+        "admin_logs": {
+            ".read": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+        },
+        "admin_bulk_templates": {
+            ".read": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+        },
+        "app_config": {
+            ".read": true,
+            ".write": "root.child('admins').child(auth.uid).exists()"
+        },
+        "platform_config": {
+            ".read": true,
+            ".write": "root.child('admins').child(auth.uid).exists()"
+        },
+        "deposits": {
+            ".read": "auth != null",
+            ".indexOn": [
+                "userId",
+                "status"
+            ],
+            "$depositId": {
+                ".write": "auth != null && (!data.exists() || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists() || (data.child('userId').val() === auth.uid && data.child('status').val() === 'PENDING'))"
+            }
+        },
+        "withdrawals": {
+            ".read": "auth != null",
+            ".indexOn": [
+                "userId",
+                "status"
+            ],
+            "$withdrawalId": {
+                ".write": "auth != null && (!data.exists() || root.child('admins').child(auth.uid).exists() || (data.child('userId').val() === auth.uid && data.child('status').val() === 'PENDING'))"
+            }
+        },
+        "referrals": {
+            ".read": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+            "$referrerUid": {
+                ".read": "auth.uid === $referrerUid || root.child('admins').child(auth.uid).exists()",
+                "$referredUid": {
+                    ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+                }
+            }
+        },
+        "referral_stats": {
+            ".read": "auth != null",
+            "$uid": {
+                ".read": "auth.uid === $uid || root.child('admins').child(auth.uid).exists()",
+                ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+            }
+        },
+        "user_notifications": {
+            "$uid": {
+                ".read": "auth.uid === $uid || root.child('admins').child(auth.uid).exists()",
+                ".write": "auth.uid === $uid || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+            }
+        },
+        "admin_notifications": {
+            ".read": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+            ".indexOn": ["autoGenerated", "timestamp"]
+        },
+        "smart_notif_tracking": {
+            ".read": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+        },
+        "fcm_tokens": {
+            ".read": "root.child('admins').child(auth.uid).exists()",
+            "$uid": {
+                ".write": "auth.uid === $uid"
+            }
+        },
+        "ban_history": {
+            ".read": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+            "$uid": {
+                ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+            }
+        },
+        "rate_limits": {
+            "$uid": {
+                ".read": false,
+                ".write": false
+            }
+        },
+        "coupons": {
+            ".read": true,
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+            ".indexOn": [
+                "code",
+                "active"
+            ]
+        },
+        "daily_rewards_config": {
+            ".read": true,
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+        },
+        "spin_wheel_config": {
+            ".read": true,
+            ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+        },
+        "tournaments": {
+            ".read": true,
+            ".indexOn": [
+                "status",
+                "gameId",
+                "startsAt",
+                "createdAt"
+            ],
+            "$tournamentId": {
+                ".write": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+                "participants": {
+                    "$uid": {
+                        ".write": "auth.uid === $uid || root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()"
+                    }
+                }
+            }
+        },
+        "coupon_redemptions": {
+            ".read": "root.child('admins').child(auth.uid).exists() || root.child('moderators').child(auth.uid).exists()",
+            "$couponId": {
+                "$uid": {
+                    ".read": "auth.uid === $uid"
+                }
+            }
+        }
+    }
+}

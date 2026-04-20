@@ -1,0 +1,57 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // App release APKs — public download, admin-only upload
+    match /app_releases/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.resource.size < 50 * 1024 * 1024
+                   && request.resource.contentType == 'application/vnd.android.package-archive';
+    }
+
+    // Tournament banners — authenticated users can upload (max 5MB images)
+    match /tournament_banners/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Ludo match screenshots — authenticated users can upload their own proof
+    match /ludo_screenshots/{matchId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Slider images — admin uploaded (checked client-side, auth required)
+    match /slider_images/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Game icons — admin uploaded
+    match /game_icons/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.resource.size < 2 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // User avatars — authenticated users can upload (max 500KB)
+    match /avatars/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+                   && request.resource.size < 500 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Default: deny all other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
