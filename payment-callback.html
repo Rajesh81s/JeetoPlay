@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Complete - JeetoPlay</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #0a0a1a 0%, #0f1629 50%, #0a0a1a 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            overflow: hidden;
+        }
+        .container {
+            background: linear-gradient(145deg, rgba(26,26,50,0.95) 0%, rgba(16,24,48,0.98) 100%);
+            border-radius: 28px;
+            padding: 36px 28px;
+            max-width: 380px;
+            width: 100%;
+            text-align: center;
+            border: 1px solid rgba(74,222,128,0.2);
+            box-shadow: 0 24px 80px rgba(0,0,0,0.6), 0 0 60px rgba(74,222,128,0.08);
+            position: relative;
+            overflow: hidden;
+            animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .container::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at center, rgba(74,222,128,0.04) 0%, transparent 60%);
+            pointer-events: none;
+        }
+        .checkmark-ring {
+            width: 80px; height: 80px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #4ade80, #22c55e);
+            display: flex; align-items: center; justify-content: center;
+            margin: 0 auto 20px;
+            box-shadow: 0 8px 32px rgba(74,222,128,0.35);
+            animation: popIn 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            position: relative; z-index: 2;
+        }
+        .checkmark-ring svg { width: 40px; height: 40px; }
+        .checkmark-ring svg path {
+            stroke: #0a0a1a; stroke-width: 3; fill: none;
+            stroke-dasharray: 50; stroke-dashoffset: 50;
+            animation: drawCheck 0.5s ease 0.4s forwards;
+        }
+        .title {
+            font-size: 1.4rem; font-weight: 800;
+            background: linear-gradient(135deg, #4ade80, #86efac);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            margin-bottom: 8px; position: relative; z-index: 2;
+            animation: fadeIn 0.5s ease 0.3s both;
+        }
+        .message {
+            font-size: 0.88rem; color: #9ca3af; margin-bottom: 24px;
+            line-height: 1.6; position: relative; z-index: 2;
+            animation: fadeIn 0.5s ease 0.5s both;
+        }
+        .message strong { color: #e5e7eb; }
+        .auto-msg {
+            font-size: 0.75rem; color: #6b7280; margin-top: 16px;
+            display: flex; align-items: center; justify-content: center; gap: 6px;
+            position: relative; z-index: 2;
+            animation: fadeIn 0.5s ease 0.8s both;
+        }
+        .auto-msg .dot { width: 6px; height: 6px; border-radius: 50%; background: #4ade80; animation: pulse 1.5s infinite; }
+        .btn {
+            width: 100%; padding: 15px; border: none; border-radius: 14px;
+            font-weight: 700; font-size: 0.95rem; cursor: pointer;
+            margin-bottom: 10px; position: relative; z-index: 2;
+            transition: transform 0.15s, box-shadow 0.15s;
+            animation: fadeIn 0.5s ease 0.6s both;
+        }
+        .btn:active { transform: scale(0.97); }
+        .btn-primary {
+            background: linear-gradient(135deg, #4ade80, #22c55e);
+            color: #0a0a1a; box-shadow: 0 4px 20px rgba(74,222,128,0.3);
+        }
+        .btn-secondary {
+            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+            color: #9ca3af;
+        }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes popIn { 0% { transform: scale(0); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+        @keyframes drawCheck { to { stroke-dashoffset: 0; } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="checkmark-ring">
+            <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+        </div>
+        <div class="title">Payment Successful!</div>
+        <div class="message">
+            Your coins are being credited to your wallet.<br>
+            <strong>You can close this page now.</strong>
+        </div>
+        <button class="btn btn-primary" onclick="goToApp()">✓ Go to Wallet</button>
+        <button class="btn btn-secondary" onclick="tryClose()">Close This Page</button>
+        <div class="auto-msg">
+            <span class="dot"></span>
+            <span id="auto-text">Returning automatically in <strong id="countdown">3</strong>s...</span>
+        </div>
+    </div>
+
+    <script>
+        // === 1. Parse URL params from TranzUPI redirect ===
+        const urlParams = new URLSearchParams(window.location.search);
+        const orderId = urlParams.get('order_id') || urlParams.get('orderId') || '';
+        const status = urlParams.get('status') || '';
+
+        // === 2. Signal parent window (opener) via postMessage ===
+        function signalParent() {
+            try {
+                if (window.opener && !window.opener.closed) {
+                    window.opener.postMessage({
+                        type: 'JEETOPLAY_PAYMENT_CALLBACK',
+                        orderId: orderId,
+                        status: status || 'CALLBACK_RECEIVED',
+                        timestamp: Date.now()
+                    }, '*');
+                    console.log('[PaymentCallback] Sent postMessage to opener');
+                }
+            } catch (e) {
+                console.warn('[PaymentCallback] Could not signal opener:', e.message);
+            }
+        }
+
+        // Signal immediately and again after 500ms (in case opener is still loading)
+        signalParent();
+        setTimeout(signalParent, 500);
+        setTimeout(signalParent, 1500);
+
+        // === 3. Update localStorage for recovery ===
+        const pending = localStorage.getItem('pending_deposit_txn');
+        if (pending) {
+            try {
+                const data = JSON.parse(pending);
+                data.callbackReceived = true;
+                data.callbackStatus = status;
+                data.completedAt = Date.now();
+                localStorage.setItem('pending_deposit_txn', JSON.stringify(data));
+            } catch (e) { }
+        }
+
+        // === 4. Navigation ===
+        function goToApp() {
+            window.location.href = '/app.html#wallet';
+        }
+        function tryClose() {
+            window.close();
+            setTimeout(goToApp, 500);
+        }
+
+        // === 5. Auto-close/redirect countdown ===
+        let countdown = 3;
+        const countdownEl = document.getElementById('countdown');
+        const autoInterval = setInterval(() => {
+            countdown--;
+            if (countdownEl) countdownEl.textContent = countdown;
+            if (countdown <= 0) {
+                clearInterval(autoInterval);
+                // Try to close popup first, fallback to redirect
+                window.close();
+                setTimeout(goToApp, 300);
+            }
+        }, 1000);
+    </script>
+</body>
+
+</html>
